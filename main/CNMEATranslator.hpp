@@ -41,12 +41,15 @@ public:
         int Timer_ms;
 	};
 #if defined(_WIN32) || defined(__linux__)
+#if !defined(_SERIALEMULATOR)
         struct sArgumentsSerial
         {
             CNMEATranslator* pTranslator;
             CSerialClient* pSerial;
             int Timer_ms;
         };
+#else
+#endif
     #elif defined(_ESP32)
         struct sArgumentsCAN
         {

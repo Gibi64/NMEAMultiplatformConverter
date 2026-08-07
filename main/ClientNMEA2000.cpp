@@ -10,6 +10,14 @@
 #include "InitLog.hpp"
 #include "CRouteurEmulateurNMEA.hpp"
 #include "CCANPGN.hpp"
+void MainLoop(void*)
+{
+    for(;;)
+    {
+       CTimeUtils::CPUSleep(2);
+    }
+}
+
 #if defined(_ESP32)
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -17,14 +25,6 @@
 #include "nvs_flash.h"
 
 
-void MainLoop(void*)
-{
-    for(;;)
-    {
-        // ton code
-       CTimeUtils::CPUSleep(2);
-    }
-}
 void InitWiFi_AP()
 {
     // Initialisation NVS (obligatoire pour le WiFi)
