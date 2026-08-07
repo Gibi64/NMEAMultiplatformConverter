@@ -37,6 +37,23 @@ jobs:
 
           DATE_UTC="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
 
+          TMP_COMMITS="$(mktemp)"
+          git log --no-merges --pretty='%h%x09%s' ${RANGE} > "$TMP_COMMITS" || true
+
+          print_section() {
+            local title="$1"
+            local pattern="$2"
+            echo "### ${title}"
+            local lines
+            lines="$(grep -Ei "$pattern" "$TMP_COMMITS" || true)"
+            if [ -n "$lines" ]; then
+              echo "$lines" | sed -E 's/^([^[:space:]]+)\t(.*)$/- \1 \2/'
+            else
+              echo "- Aucun"
+            fi
+            echo ""
+          }
+
           {
             echo ""
             echo "## Push ${AFTER}"
@@ -45,10 +62,21 @@ jobs:
             echo "- Auteur: ${{ github.actor }}"
             echo "- Range: ${RANGE}"
             echo ""
-            echo "### Commits"
-            git log --no-merges --pretty='- %h %s' ${RANGE} || echo "- Aucun commit analyse"
+            print_section "Ajouts" '(^|:|[[:space:]])(feat|add|ajout|create|new)(\(|:|[[:space:]]|$)'
+            print_section "Corrections" '(^|:|[[:space:]])(fix|bug|hotfix|correct|corrige)(\(|:|[[:space:]]|$)'
+            print_section "Refactor" '(^|:|[[:space:]])(refactor|cleanup|clean)(\(|:|[[:space:]]|$)'
+            print_section "Documentation" '(^|:|[[:space:]])(docs|doc|readme)(\(|:|[[:space:]]|$)'
+            echo "### Autres"
+            OTHERS="$(grep -Eiv '(^|:|[[:space:]])(feat|add|ajout|create|new|fix|bug|hotfix|correct|corrige|refactor|cleanup|clean|docs|doc|readme)(\(|:|[[:space:]]|$)' "$TMP_COMMITS" || true)"
+            if [ -n "$OTHERS" ]; then
+              echo "$OTHERS" | sed -E 's/^([^[:space:]]+)\t(.*)$/- \1 \2/'
+            else
+              echo "- Aucun"
+            fi
             echo ""
           } >> PUSH_LOG.md
+
+          rm -f "$TMP_COMMITS"
 
       - name: Commit and push log update
         shell: bash

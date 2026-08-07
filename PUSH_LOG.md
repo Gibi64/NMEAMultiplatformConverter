@@ -1,6 +1,7 @@
 # Push Log
 
 Historique automatique des changements entre deux push sur la branche main.
+Chaque entree classe les commits par rubriques: Ajouts, Corrections, Refactor, Documentation, Autres.
 
 ## Push d231e2604ae3bfcb9ca6de9b85269faa79d5aa8f
 
@@ -10,4 +11,3 @@ Historique automatique des changements entre deux push sur la branche main.
 
 ### Commits
 - d231e26 Add automatic push change log workflow
-
