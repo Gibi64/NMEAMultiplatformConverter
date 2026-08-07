@@ -9,8 +9,8 @@
 #include "CTimeUtils.hpp"
 #include "InitLog.hpp"
 #include <math.h>
-#ifdef _SERIALEMULATOR
 class CRouteurEmulateurNMEA;
+#ifdef _SERIALEMULATOR
 #else
 #include "SerialClient.h"
 #endif       
@@ -156,6 +156,7 @@ public:
     struct sArgumentsAIS
     {
         CNMEATranslator* pTranslator;
+        CRouteurEmulateurNMEA* pRouteur;
         int Timer_ms;
         int StaleTimeout_ms;
     };
@@ -164,6 +165,7 @@ public:
     void EnqueueAISUpdate(uint32_t mmsi, double latitude, double longitude);
     void ProcessAISUpdates();
     void PurgeAISContacts(uint64_t nowMs, uint64_t staleTimeoutMs);
+    std::vector<std::string> ConsumeAISMessages();
     size_t GetAISContactCount();
     static sUTCTime DecodeZDA(std::string zda);
     static uint64_t ToEpoch2001ms(const sUTCTime& t);

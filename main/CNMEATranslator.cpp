@@ -97,6 +97,12 @@ std::string CNMEATranslator::DecodePGN_129038(const std::vector<unsigned char> &
         (static_cast<uint32_t>(Encoded[3]) << 16) |
         (static_cast<uint32_t>(Encoded[4]) << 24);
 
+#if defined(_SERIALEMULATOR)
+    // L'emulateur genere des MMSI commencant par 227xxxxxx.
+    if (mmsi < 227000000 || mmsi > 227999999)
+        return {};
+#endif
+
     int32_t rawLat = static_cast<int32_t>(Encoded[5]) |
         (static_cast<int32_t>(Encoded[6]) << 8) |
         (static_cast<int32_t>(Encoded[7]) << 16) |
@@ -271,7 +277,7 @@ void CNMEATranslator::LoopExternalReadData(void *Args)
         CNMEATranslator* pTransltator = pArgs->pTranslator;
         CRouteurEmulateurNMEA* pRouteur = pArgs->pRouteur;
         {
-            std::lock_guard<std::mutex> lock(pRouteur->GetMutex());
+            std::lock_guard<std::mutex> lock(pRouteur->GetFIFOMutex());
 
             if (!pRouteur->g_fifo_Send.empty())
             {
@@ -672,12 +678,25 @@ void CNMEATranslator::ProcessAISUpdates()
     std::lock_guard<std::mutex> lock(m_AISContactsMutex);
     for (const auto& update : pending)
     {
-        auto& contact = m_AISContacts[update.mmsi];
-        contact.mmsi = update.mmsi;
-        contact.latitude = update.latitude;
-        contact.longitude = update.longitude;
-        contact.lastSeenMs = update.receivedMs;
-        contact.dirty = true;
+        auto it = m_AISContacts.find(update.mmsi);
+        if (it == m_AISContacts.end())
+        {
+            sAISContact contact{};
+            contact.mmsi = update.mmsi;
+            contact.latitude = update.latitude;
+            contact.longitude = update.longitude;
+            contact.lastSeenMs = update.receivedMs;
+            contact.dirty = true;
+            m_AISContacts.emplace(update.mmsi, contact);
+        }
+        else
+        {
+            auto& contact = it->second;
+            contact.latitude = update.latitude;
+            contact.longitude = update.longitude;
+            contact.lastSeenMs = update.receivedMs;
+            contact.dirty = true;
+        }
     }
 }
 
@@ -692,6 +711,28 @@ void CNMEATranslator::PurgeAISContacts(uint64_t nowMs, uint64_t staleTimeoutMs)
         else
             ++it;
     }
+}
+
+std::vector<std::string> CNMEATranslator::ConsumeAISMessages()
+{
+    std::vector<std::string> messages;
+    std::lock_guard<std::mutex> lock(m_AISContactsMutex);
+    messages.reserve(m_AISContacts.size());
+
+    for (auto& entry : m_AISContacts)
+    {
+        auto& contact = entry.second;
+        if (!contact.dirty)
+            continue;
+
+        char buffer[128];
+        snprintf(buffer, sizeof(buffer), "MMSI: %lu, Latitude: %.7f, Longitude: %.7f",
+            static_cast<unsigned long>(contact.mmsi), contact.latitude, contact.longitude);
+        messages.emplace_back(buffer);
+        contact.dirty = false;
+    }
+
+    return messages;
 }
 
 size_t CNMEATranslator::GetAISContactCount()
@@ -712,10 +753,21 @@ void CNMEATranslator::LoopAIS(void* Args)
         pTranslator->ProcessAISUpdates();
         pTranslator->PurgeAISContacts(CTimeUtils::GetMs(), static_cast<uint64_t>(pArgs->StaleTimeout_ms));
 
+        if (pTranslator->m_pUDPServer)
+        {
+            auto aisMessages = pTranslator->ConsumeAISMessages();
+            for (const auto& message : aisMessages)
+            {
+                write_log("Sending AIS: " + message + "\n");
+                pTranslator->m_pUDPServer->send(message);
+            }
+        }
+
         const uint64_t nowMs = CTimeUtils::GetMs();
         if (nowMs - lastLogTimeMs >= 1000)
         {
-            write_log("AIS contacts active: " + std::to_string(pTranslator->GetAISContactCount()) + "\n");
+            const size_t targetCount = pArgs->pRouteur ? pArgs->pRouteur->GetAISTargetCount() : pTranslator->GetAISContactCount();
+            write_log("Nombre de cibles AIS : " + std::to_string(targetCount) + "\n");
             lastLogTimeMs = nowMs;
         }
 

@@ -38,13 +38,13 @@ CRouteurEmulateurNMEA::sAISTarget BuildRandomAISTarget(double centerLat, double 
 
 void CRouteurEmulateurNMEA::PushFIFO(const unsigned char* data, size_t size)
 {   
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_fifoMutex);
     g_fifo_Send.emplace_back(data, data + size);
 }
 
 void CRouteurEmulateurNMEA::InitAISTargets(double centerLat, double centerLon, int minCount, int maxCount)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_aisMutex);
     if (!g_aisTargets.empty())
         return;
 
@@ -62,13 +62,13 @@ void CRouteurEmulateurNMEA::InitAISTargets(double centerLat, double centerLon, i
 
 void CRouteurEmulateurNMEA::AddAISTarget(double centerLat, double centerLon, double radiusNm)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_aisMutex);
     g_aisTargets.push_back(BuildRandomAISTarget(centerLat, centerLon, radiusNm, g_aisTargets.size()));
 }
 
 void CRouteurEmulateurNMEA::RemoveAISTarget()
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_aisMutex);
     if (g_aisTargets.empty())
         return;
 
@@ -78,9 +78,15 @@ void CRouteurEmulateurNMEA::RemoveAISTarget()
         m_AISCursor = g_aisTargets.size();
 }
 
+size_t CRouteurEmulateurNMEA::GetAISTargetCount()
+{
+    std::lock_guard<std::mutex> lock(m_aisMutex);
+    return g_aisTargets.size();
+}
+
 void CRouteurEmulateurNMEA::UpdateAISTargets(double deltaTimeSec)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_aisMutex);
     if (g_aisTargets.empty())
         return;
 
@@ -101,7 +107,7 @@ void CRouteurEmulateurNMEA::UpdateAISTargets(double deltaTimeSec)
 
 bool CRouteurEmulateurNMEA::GetNextAISTarget(sAISTarget& target)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_aisMutex);
     if (g_aisTargets.empty())
         return false;
 
@@ -128,7 +134,7 @@ void CRouteurEmulateurNMEA::LoopFIFOThreadServer(void* Args)
     while (!pRouteur->g_bStopThread.load())
     {
         { // Zone prot�g�e pour acc�der � g_fifo_Send, ces {} sont importantes pour limiter la port�e du lock
-            std::lock_guard<std::mutex> lock(pRouteur->m_mutex);
+            std::lock_guard<std::mutex> lock(pRouteur->m_fifoMutex);
 #ifndef _SERIALEMULATOR
             if (!pRouteur->g_fifo_Send.empty() && client->GetSerialHandle() != INVALID_HANDLE_VALUE)
             {

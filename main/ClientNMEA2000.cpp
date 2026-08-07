@@ -111,8 +111,12 @@ int main()
     ArgsUDP.Timer_ms = 1000;
     CLaunchThread ThreadTCP(&CNMEATranslator::LoopTCP_UDPSend, &ArgsUDP );
     ArgsAIS.pTranslator = &Translator;
+    ArgsAIS.pRouteur = nullptr;
     ArgsAIS.Timer_ms = 20;
-    ArgsAIS.StaleTimeout_ms = 120000;
+    ArgsAIS.StaleTimeout_ms = 15000;
+#if defined (_SERIALEMULATOR)
+    ArgsAIS.pRouteur = &Routeur;
+#endif
     CLaunchThread ThreadAIS(&CNMEATranslator::LoopAIS, &ArgsAIS);
 #if defined (_SERIALEMULATOR)
 	// On lance une thread FIFO pour générer les données NMEA vers le FIFO à haute frequence (10Hz)

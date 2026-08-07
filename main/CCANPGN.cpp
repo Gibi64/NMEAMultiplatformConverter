@@ -489,6 +489,7 @@ void CPGN_CNMEA_129038::GenerateRandomData(double trueDeltaTime, double timeFact
 {
     if (!m_pRouteur)
         return;
+    static bool aisSeeded = false;
 
     double centerLat = 43.5800000;
     double centerLon = 7.1200000;
@@ -498,15 +499,30 @@ void CPGN_CNMEA_129038::GenerateRandomData(double trueDeltaTime, double timeFact
         centerLon = m_pOwnShip->getLongitude();
     }
 
-    if (m_pRouteur->g_aisTargets.empty())
+    if (!aisSeeded)
+    {
         m_pRouteur->InitAISTargets(centerLat, centerLon, 5, 10);
+        aisSeeded = true;
+    }
+
+    const size_t n = m_pRouteur->GetAISTargetCount();
+
+    constexpr int CreatePct = 16;
+    constexpr int BaseDeletePct = 16;
+    constexpr size_t SoftHighTarget = 20;
+
+    int deletePct = BaseDeletePct;
+    if (n > SoftHighTarget)
+        deletePct += static_cast<int>(n - SoftHighTarget);
+    if (deletePct > 80)
+        deletePct = 80;
 
     const int action = rand() % 100;
-    if (action < 16)
+    if (action < CreatePct)
     {
         m_pRouteur->AddAISTarget(centerLat, centerLon, 20.0);
     }
-    else if (action >= 84)
+    else if (action >= 100 - deletePct)
     {
         m_pRouteur->RemoveAISTarget();
     }
