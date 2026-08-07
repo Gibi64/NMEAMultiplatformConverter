@@ -2,6 +2,8 @@
 
 This project is an NMEA data converter designed to run on an ESP32 platform. The repository also contains a first working version of the system, suitable for testing and further development.
 
+Ce projet est un convertisseur de donnees NMEA concu pour fonctionner sur une plateforme ESP32. Le depot contient egalement une premiere version operationnelle du systeme, adaptee aux tests et aux evolutions futures.
+
 ## Présentation / Presentation
 
 ### Français
@@ -59,11 +61,27 @@ idf.py build
 
 ## Flashage / Flashing
 
+### Francais
+
+Pour flasher le firmware sur la carte ESP32, utilisez la commande suivante en remplacant `<PORT>` par le port serie de votre carte.
+
+### English
+
+To flash the firmware to the ESP32 board, use the following command and replace `<PORT>` with your board serial port.
+
 ```bash
 idf.py -p <PORT> flash
 ```
 
 ## Surveillance de la console série / Serial console monitoring
+
+### Francais
+
+Pour afficher les logs en temps reel sur le port serie, lancez la commande suivante apres le flash.
+
+### English
+
+To display real-time logs from the serial port, run the following command after flashing.
 
 ```bash
 idf.py -p <PORT> monitor
