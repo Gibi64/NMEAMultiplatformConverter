@@ -77,3 +77,25 @@ Chaque entree classe les commits par rubriques: Ajouts, Corrections, Refactor, D
 ### Autres
 - dc130a9 Stabilize AIS target flow and UDP output
 
+
+## Push ece6ad446e4fdce2adccd302f59dde1f8603e54e
+
+- Date: 2026-08-07 11:41:48 UTC
+- Auteur: Gibi64
+- Range: 1954e7bd4301e31f1e7b62f27abb6a26bc9d89ef..ece6ad446e4fdce2adccd302f59dde1f8603e54e
+
+### Ajouts
+- Aucun
+
+### Corrections
+- Aucun
+
+### Refactor
+- ece6ad4 Refactor translator ship model and improve AIS UDP
+
+### Documentation
+- Aucun
+
+### Autres
+- Aucun
+
