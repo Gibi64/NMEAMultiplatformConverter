@@ -75,12 +75,14 @@ int main()
 
     Translator.StartLoop();
     CNMEATranslator::sArgumentsUDP ArgsUDP;
+    CNMEATranslator::sArgumentsAIS ArgsAIS;
 
     /////////////////////////////////////////////////////////////////////////////////////////////////
 #if defined (_SERIALEMULATOR)
     CRouteurEmulateurNMEA Routeur;
     CPGN_CNMEA_129025 Position(&Routeur);
     CPGN_CNMEA_128267 Depth(&Routeur);
+    CPGN_CNMEA_129038 AIS(&Routeur, &Position);
 
     CNMEATranslator::sArgumentsEmulator ArgsExternalDataInput;
     ArgsExternalDataInput.pTranslator = &Translator;
@@ -108,6 +110,10 @@ int main()
 	ArgsUDP.pUDPServer = &udpServer;
     ArgsUDP.Timer_ms = 1000;
     CLaunchThread ThreadTCP(&CNMEATranslator::LoopTCP_UDPSend, &ArgsUDP );
+    ArgsAIS.pTranslator = &Translator;
+    ArgsAIS.Timer_ms = 20;
+    ArgsAIS.StaleTimeout_ms = 120000;
+    CLaunchThread ThreadAIS(&CNMEATranslator::LoopAIS, &ArgsAIS);
 #if defined (_SERIALEMULATOR)
 	// On lance une thread FIFO pour générer les données NMEA vers le FIFO à haute frequence (10Hz)
     //

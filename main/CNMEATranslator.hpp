@@ -3,6 +3,8 @@
 #include <vector>
 #include <map>
 #include <string>
+#include <mutex>
+#include <cstdint>
 #include "CUDP_Broadcast_Server.hpp"
 #include "CTimeUtils.hpp"
 #include "InitLog.hpp"
@@ -86,12 +88,31 @@ public:
         double speedKnots;       // vitesse en nœuds
         double courseDegrees;    // cap en degrés (0 = Nord, 90 = Est)
     };
+    struct sAISUpdate
+    {
+        uint32_t mmsi;
+        double latitude;
+        double longitude;
+        uint64_t receivedMs;
+    };
+    struct sAISContact
+    {
+        uint32_t mmsi;
+        double latitude;
+        double longitude;
+        uint64_t lastSeenMs;
+        bool dirty;
+    };
 
 private:
     bool m_bStarted = false;
     std::vector<unsigned char> m_Received;
     sUTCTime m_UTCTime;
 	CUDP_Broadcast_Server* m_pUDPServer;
+    std::vector<sAISUpdate> m_AISPending;
+    std::map<uint32_t, sAISContact> m_AISContacts;
+    std::mutex m_AISPendingMutex;
+    std::mutex m_AISContactsMutex;
 public:
     std::map<int, std::string(*)(const std::vector<unsigned char> &, CNMEATranslator *)> m_MapPGN;
 	/////////// Vrcteur de bufferisation pour le traitement des données RMC en particulier les donnees moyennes
@@ -132,7 +153,18 @@ public:
         CUDP_Broadcast_Server* pUDPServer;
         int Timer_ms;
 	};
+    struct sArgumentsAIS
+    {
+        CNMEATranslator* pTranslator;
+        int Timer_ms;
+        int StaleTimeout_ms;
+    };
     static void LoopExternalReadData(void *Args);
+    static void LoopAIS(void* Args);
+    void EnqueueAISUpdate(uint32_t mmsi, double latitude, double longitude);
+    void ProcessAISUpdates();
+    void PurgeAISContacts(uint64_t nowMs, uint64_t staleTimeoutMs);
+    size_t GetAISContactCount();
     static sUTCTime DecodeZDA(std::string zda);
     static uint64_t ToEpoch2001ms(const sUTCTime& t);
     static sNavDelta ComputeDelta(const sRMCData& p1, const sRMCData& p2);

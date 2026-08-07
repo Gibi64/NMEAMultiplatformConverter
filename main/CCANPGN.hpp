@@ -108,9 +108,10 @@ private:
     uint32_t m_MMSI;
     double m_Latitude;
     double m_Longitude;
+    CPGN_CNMEA_129025* m_pOwnShip;
 
 public:
-    CPGN_CNMEA_129038(CRouteurEmulateurNMEA* pRouteur);
+    CPGN_CNMEA_129038(CRouteurEmulateurNMEA* pRouteur, CPGN_CNMEA_129025* pOwnShip = nullptr);
     void setTargetData(uint32_t mmsi, double latitude, double longitude);
     virtual void encode() override;
     virtual void GenerateRandomData(double trueDeltaTime, double timeFactor) override;

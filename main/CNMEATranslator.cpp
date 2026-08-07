@@ -5,6 +5,7 @@
 #include "CRouteurEmulateurNMEA.hpp"
 #include "CNMEATranslator.hpp"
 #include "InitLog.hpp"
+
 #if defined(_ESP32)
 #include "driver/twai.h"
 
@@ -108,6 +109,8 @@ std::string CNMEATranslator::DecodePGN_129038(const std::vector<unsigned char> &
 
     double latitude = static_cast<double>(rawLat) / 1e7;
     double longitude = static_cast<double>(rawLon) / 1e7;
+
+    pTranslator->EnqueueAISUpdate(mmsi, latitude, longitude);
 
     char buffer[128];
     snprintf(buffer, sizeof(buffer), "MMSI: %ld, Latitude: %.7f, Longitude: %.7f", (long) mmsi, latitude, longitude);
@@ -289,7 +292,10 @@ void CNMEATranslator::LoopExternalReadData(void *Args)
         if (nbrOfBytes)
         {
             for (size_t i = 0; i < nbrOfBytes; ++i)
-                pTransltator->m_Received.push_back(static_cast<BYTE>(pSerial->getChar()));
+            {
+                BYTE c = static_cast<BYTE>(pSerial->getChar());
+                pTransltator->m_Received.push_back(c);
+            }
         }
         auto bufferSize = pTransltator->m_Received.size();
 #elif defined(_ESP32)
@@ -304,11 +310,15 @@ void CNMEATranslator::LoopExternalReadData(void *Args)
         auto bufferSize = pTransltator->m_Received.size();
 #endif
 #endif
-        if (!CurrentPgn)
+
+        // Draine le buffer: on decode toutes les trames completes disponibles avant d'attendre de nouvelles donnees.
+        for (;;)
         {
-            if (bufferSize >= HeaderSize)
+            if (!CurrentPgn)
             {
-                std::vector<unsigned char> buffer(HeaderSize);
+                if (bufferSize < HeaderSize)
+                    break;
+
                 uint32_t header = (static_cast<uint32_t>(pTransltator->m_Received[0]) << 24) |
                     (static_cast<uint32_t>(pTransltator->m_Received[1]) << 16) |
                     (static_cast<uint32_t>(pTransltator->m_Received[2]) << 8) |
@@ -316,26 +326,27 @@ void CNMEATranslator::LoopExternalReadData(void *Args)
                 CurrentPgn = (header >> 8) & 0x3FFFF;
                 pTransltator->m_Received.erase(pTransltator->m_Received.begin(), pTransltator->m_Received.begin() + HeaderSize);
                 bufferSize = pTransltator->m_Received.size();
-
             }
-        }
-        if (CurrentPgn && bufferSize >= GetDataCount(CurrentPgn))
-        {
+
+            const int dataCount = GetDataCount(CurrentPgn);
+            if (dataCount <= 0)
+            {
+                CurrentPgn = 0;
+                continue;
+            }
+
+            if (bufferSize < static_cast<size_t>(dataCount))
+                break;
+
             auto it = pTransltator->m_MapPGN.find(CurrentPgn);
             if (it != pTransltator->m_MapPGN.end())
             {
-                std::string decodedMessage = it->second(std::vector<unsigned char>(pTransltator->m_Received.begin(), pTransltator->m_Received.begin() + GetDataCount(CurrentPgn)), pTransltator);
-                pTransltator->m_Received.erase(pTransltator->m_Received.begin(), pTransltator->m_Received.begin() + GetDataCount(CurrentPgn));
-                CurrentPgn = 0; // Reset for next message
+                std::string decodedMessage = it->second(std::vector<unsigned char>(pTransltator->m_Received.begin(), pTransltator->m_Received.begin() + dataCount), pTransltator);
             }
-        }
-        else
-        {
-            // On n'a pas encore reçu assez de données pour décoder le PGN actuel, on attend la suite
-            // On est peut -être en timeOut
-            // il faudra stocker le time du dernier "full received" dans l'autre branche du if
-            // et tester si le DeltaTime est supérieur à un seuil (ex: 100ms) pour considérer que le message est perdu et réinitialiser CurrentPgn à 0
-            // et vider le buffer
+
+            pTransltator->m_Received.erase(pTransltator->m_Received.begin(), pTransltator->m_Received.begin() + dataCount);
+            CurrentPgn = 0; // Reset for next message
+            bufferSize = pTransltator->m_Received.size();
         }
         //std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -639,5 +650,75 @@ void CNMEATranslator::LoopTCP_UDPSend(void* Args)
             startTime = CTimeUtils::GetMs();
         }
         CTimeUtils::CPUSleep(2);
+    }
+}
+
+void CNMEATranslator::EnqueueAISUpdate(uint32_t mmsi, double latitude, double longitude)
+{
+    std::lock_guard<std::mutex> lock(m_AISPendingMutex);
+    m_AISPending.push_back({ mmsi, latitude, longitude, CTimeUtils::GetMs() });
+}
+
+void CNMEATranslator::ProcessAISUpdates()
+{
+    std::vector<sAISUpdate> pending;
+    {
+        std::lock_guard<std::mutex> lock(m_AISPendingMutex);
+        if (m_AISPending.empty())
+            return;
+        pending.swap(m_AISPending);
+    }
+
+    std::lock_guard<std::mutex> lock(m_AISContactsMutex);
+    for (const auto& update : pending)
+    {
+        auto& contact = m_AISContacts[update.mmsi];
+        contact.mmsi = update.mmsi;
+        contact.latitude = update.latitude;
+        contact.longitude = update.longitude;
+        contact.lastSeenMs = update.receivedMs;
+        contact.dirty = true;
+    }
+}
+
+void CNMEATranslator::PurgeAISContacts(uint64_t nowMs, uint64_t staleTimeoutMs)
+{
+    std::lock_guard<std::mutex> lock(m_AISContactsMutex);
+    for (auto it = m_AISContacts.begin(); it != m_AISContacts.end(); )
+    {
+        const bool isStale = (nowMs > it->second.lastSeenMs) && ((nowMs - it->second.lastSeenMs) > staleTimeoutMs);
+        if (isStale)
+            it = m_AISContacts.erase(it);
+        else
+            ++it;
+    }
+}
+
+size_t CNMEATranslator::GetAISContactCount()
+{
+    std::lock_guard<std::mutex> lock(m_AISContactsMutex);
+    return m_AISContacts.size();
+}
+
+void CNMEATranslator::LoopAIS(void* Args)
+{
+    auto pArgs = static_cast<sArgumentsAIS*>(Args);
+    CNMEATranslator* pTranslator = pArgs->pTranslator;
+    if (!pTranslator->m_bStarted) return;
+
+    uint64_t lastLogTimeMs = CTimeUtils::GetMs();
+    for (;;)
+    {
+        pTranslator->ProcessAISUpdates();
+        pTranslator->PurgeAISContacts(CTimeUtils::GetMs(), static_cast<uint64_t>(pArgs->StaleTimeout_ms));
+
+        const uint64_t nowMs = CTimeUtils::GetMs();
+        if (nowMs - lastLogTimeMs >= 1000)
+        {
+            write_log("AIS contacts active: " + std::to_string(pTranslator->GetAISContactCount()) + "\n");
+            lastLogTimeMs = nowMs;
+        }
+
+        CTimeUtils::CPUSleep(pArgs->Timer_ms > 0 ? pArgs->Timer_ms : 20);
     }
 }

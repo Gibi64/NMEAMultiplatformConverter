@@ -433,13 +433,14 @@ void CPGN_CNMEA_128267::GenerateRandomData(double trueDeltaTime, double timeFact
     m_DepthMeters = BoundedRand(0, 50, 1);
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-CPGN_CNMEA_129038::CPGN_CNMEA_129038(CRouteurEmulateurNMEA* pRouteur)
+CPGN_CNMEA_129038::CPGN_CNMEA_129038(CRouteurEmulateurNMEA* pRouteur, CPGN_CNMEA_129025* pOwnShip)
 {
     m_Priority = 4;
     m_SourceAddress = 0x04; // Transpondeur AIS
     m_PGN = 129038;         // 0x1F016
     setHeader();
     m_pRouteur = pRouteur;
+    m_pOwnShip = pOwnShip;
 
     m_MMSI = 0;
     m_Latitude = 0.0;
@@ -486,29 +487,44 @@ void CPGN_CNMEA_129038::encode()
 
 void CPGN_CNMEA_129038::GenerateRandomData(double trueDeltaTime, double timeFactor)
 {
-    // 0 = Création / Nouvelle cible, 1 = Maintien / Déplacement, 2 = Disparition 
-    int state = rand() % 3;
-    static uint32_t currentMmsi = 227123456;
-    static double aisLat = 43.5850000;
-    static double aisLon = 7.1250000;
-    switch (state) {
-    case 0:
-        // Création / Changement de cible 
-        currentMmsi = 227000000 + (rand() % 900000); aisLat = 43.5800000 + ((rand() % 1000) * 0.00001);
-        aisLon = 7.1200000 + ((rand() % 1000) * 0.00001);
-    break; case 1:
-        // Maintien / "Rien" de spécial (mise à jour position) 
-        aisLat += ((rand() % 100) - 50) * 0.000005;
-        aisLon += ((rand() % 100) - 50) * 0.000005;
-        break;
-    case 2:
-        // Disparition / Réinitialisation du MMSI 
-        currentMmsi = 0; // Signale l'absence de cible 
-        break;
+    if (!m_pRouteur)
+        return;
+
+    double centerLat = 43.5800000;
+    double centerLon = 7.1200000;
+    if (m_pOwnShip)
+    {
+        centerLat = m_pOwnShip->getLatitude();
+        centerLon = m_pOwnShip->getLongitude();
     }
-    m_MMSI = currentMmsi;
-    m_Latitude = aisLat;
-    m_Longitude = aisLon;
+
+    if (m_pRouteur->g_aisTargets.empty())
+        m_pRouteur->InitAISTargets(centerLat, centerLon, 5, 10);
+
+    const int action = rand() % 100;
+    if (action < 16)
+    {
+        m_pRouteur->AddAISTarget(centerLat, centerLon, 20.0);
+    }
+    else if (action >= 84)
+    {
+        m_pRouteur->RemoveAISTarget();
+    }
+
+    m_pRouteur->UpdateAISTargets(trueDeltaTime * timeFactor);
+
+    CRouteurEmulateurNMEA::sAISTarget target{};
+    if (!m_pRouteur->GetNextAISTarget(target))
+    {
+        m_MMSI = 0;
+        m_Latitude = centerLat;
+        m_Longitude = centerLon;
+        return;
+    }
+
+    m_MMSI = target.mmsi;
+    m_Latitude = target.latitude;
+    m_Longitude = target.longitude;
 }
 uint32_t CPGN_CNMEA_129038::getMMSI() 
 { 

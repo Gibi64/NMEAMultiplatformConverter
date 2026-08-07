@@ -30,12 +30,29 @@ class CRouteurEmulateurNMEA
 {
 private:
     std::mutex m_mutex;  // Son verrou dédié
+    size_t m_AISCursor = 0;
+
+public:
+    struct sAISTarget
+    {
+        uint32_t mmsi;
+        double latitude;
+        double longitude;
+        double headingDeg;
+        double speedKnots;
+    };
 
 public:
 	std::mutex& GetMutex() { return m_mutex; } // Getter pour le mutex
     std::vector<std::vector<unsigned char>> g_fifo_Send; // Global buffer to store BYTES to send
+    std::vector<sAISTarget> g_aisTargets;
     std::atomic<bool> g_bStopThread{ false }; // Global flag to control the thread
     void PushFIFO(const unsigned char* data, size_t size);
+    void InitAISTargets(double centerLat, double centerLon, int minCount = 5, int maxCount = 10);
+    void AddAISTarget(double centerLat, double centerLon, double radiusNm = 20.0);
+    void RemoveAISTarget();
+    void UpdateAISTargets(double deltaTimeSec = 0.1);
+    bool GetNextAISTarget(sAISTarget& target);
     static void LoopFIFOThreadServer(void* Args);
 };
 
