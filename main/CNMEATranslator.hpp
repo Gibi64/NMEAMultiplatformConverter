@@ -3,11 +3,10 @@
 #include <vector>
 #include <map>
 #include <string>
-#include <mutex>
-#include <cstdint>
 #include "CUDP_Broadcast_Server.hpp"
 #include "CTimeUtils.hpp"
 #include "InitLog.hpp"
+#include "CShip.hpp"
 #include <math.h>
 class CRouteurEmulateurNMEA;
 #ifdef _SERIALEMULATOR
@@ -35,6 +34,13 @@ class CNMEATranslator
 {
     #define M_PI 3.14159265358979323846
 public:
+    using tPGNDecoder = std::string(*)(const std::vector<unsigned char>&, CNMEATranslator*);
+    struct sPGNHandler
+    {
+        int dataCount;
+        tPGNDecoder decoder;
+    };
+
 	// On definit toujours la structure sArgumentsEmulator pour l'emulateur, sinon on definit la structure sArgumentsSerial pour le port serie
 	struct sArgumentsEmulator
         {
@@ -60,79 +66,14 @@ public:
             int Timer_ms;
         };
 #endif
-    struct sUTCTime
-    {
-        int year;
-        int month;
-        int day;
-        int hour;
-        int minute;
-        int second;
-        int millisecond;
-        bool empty()
-        {
-            return year == 0 && month == 0 && day == 0 && hour == 0 && minute == 0 && second == 0 && millisecond == 0;
-        }
-    };
-    struct sRMCData
-    {
-        double latitude;
-        double longitude;
-        double speedKnots;
-        double courseOverGround;
-        sUTCTime utcTime;
-	};
-    struct sNavDelta
-    {
-        double distanceMeters;   // distance entre les deux points
-        double speedKnots;       // vitesse en nœuds
-        double courseDegrees;    // cap en degrés (0 = Nord, 90 = Est)
-    };
-    struct sAISUpdate
-    {
-        uint32_t mmsi;
-        double latitude;
-        double longitude;
-        uint64_t receivedMs;
-    };
-    struct sAISContact
-    {
-        uint32_t mmsi;
-        double latitude;
-        double longitude;
-        uint64_t lastSeenMs;
-        bool dirty;
-    };
-
 private:
     bool m_bStarted = false;
     std::vector<unsigned char> m_Received;
-    sUTCTime m_UTCTime;
-	CUDP_Broadcast_Server* m_pUDPServer;
-    std::vector<sAISUpdate> m_AISPending;
-    std::map<uint32_t, sAISContact> m_AISContacts;
-    std::mutex m_AISPendingMutex;
-    std::mutex m_AISContactsMutex;
+    CUDP_Broadcast_Server* m_pUDPServer;
+    CMyShip m_myShip;
+    COtherBoats m_otherBoats;
 public:
-    std::map<int, std::string(*)(const std::vector<unsigned char> &, CNMEATranslator *)> m_MapPGN;
-	/////////// Vrcteur de bufferisation pour le traitement des données RMC en particulier les donnees moyennes
-    struct sRMCMeanData
-    {
-		int m_Count;
-        sRMCData RMCMeanData;
-    };
-    struct sDBTMeanData
-    {
-        int m_Count;
-        double DepthMeanData;
-	};
-    struct SMWVMeanData
-    {
-        int m_Count;
-        double WindSpeed;
-		double WindAngle;
-	};
-    sRMCMeanData m_RMCMeanData;
+    std::map<int, sPGNHandler> m_MapPGN;
     CNMEATranslator(CUDP_Broadcast_Server* udpServer);
     static std::string DecodePGN_129025(const std::vector<unsigned char> &Encoded, CNMEATranslator* pTranslator);
     static std::string DecodePGN_129038(const std::vector<unsigned char> &Encoded, CNMEATranslator* pTranslator);
@@ -146,7 +87,7 @@ public:
     static std::string CalculateNMEAChecksum(const std::string sentence);
     static std::string ToNMEA0183Coord(double deg, bool isLat);
     void StartLoop();
-    static int GetDataCount(int pgn);
+    int GetDataCount(int pgn) const;
     struct sArgumentsUDP
     {
         CNMEATranslator* pTranslator;
@@ -162,19 +103,5 @@ public:
     };
     static void LoopExternalReadData(void *Args);
     static void LoopAIS(void* Args);
-    void EnqueueAISUpdate(uint32_t mmsi, double latitude, double longitude);
-    void ProcessAISUpdates();
-    void PurgeAISContacts(uint64_t nowMs, uint64_t staleTimeoutMs);
-    std::vector<std::string> ConsumeAISMessages();
-    size_t GetAISContactCount();
-    static sUTCTime DecodeZDA(std::string zda);
-    static uint64_t ToEpoch2001ms(const sUTCTime& t);
-    static sNavDelta ComputeDelta(const sRMCData& p1, const sRMCData& p2);
-    bool StackMeanNavData(sRMCData data);
-    bool StackMeanDepthData(double depth);
-    bool StackMeanWindData(double speed, double angle);
-    std::string BuildRMC();
-    std::string BuildDBT();
-    std::string BuildMWV();
 	static void LoopTCP_UDPSend(void* Args);
 };

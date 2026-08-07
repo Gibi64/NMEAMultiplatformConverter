@@ -10,6 +10,11 @@
 #include "InitLog.hpp"
 #include "CRouteurEmulateurNMEA.hpp"
 #include "CCANPGN.hpp"
+
+#ifndef _TIMEFACTOR
+#define _TIMEFACTOR 1.0
+#endif
+
 void MainLoop(void*)
 {
     for(;;)
@@ -79,10 +84,15 @@ int main()
 
     /////////////////////////////////////////////////////////////////////////////////////////////////
 #if defined (_SERIALEMULATOR)
+    // _TIMEFACTOR est fixe a la compilation (ex: 5.0 = 5x plus rapide)
+    const double emulatorTimeFactor = static_cast<double>(_TIMEFACTOR);
+    CNMEACAN::SetTimeFactor(emulatorTimeFactor);
+    write_log("Emulator _TIMEFACTOR: " + std::to_string(emulatorTimeFactor) + "\n");
+
     CRouteurEmulateurNMEA Routeur;
     CPGN_CNMEA_129025 Position(&Routeur);
     CPGN_CNMEA_128267 Depth(&Routeur);
-    CPGN_CNMEA_129038 AIS(&Routeur, &Position);
+    CPGN_CNMEA_129038 AIS(&Routeur);
 
     CNMEATranslator::sArgumentsEmulator ArgsExternalDataInput;
     ArgsExternalDataInput.pTranslator = &Translator;

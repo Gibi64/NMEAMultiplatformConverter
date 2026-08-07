@@ -7,5 +7,9 @@ idf_component_register(
         "CRouteurEmulateurNMEA.cpp"
     INCLUDE_DIRS "."
 )
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE _ESP32 _SERIALEMULATOR)
+if(NOT DEFINED NMEA_TIMEFACTOR)
+    set(NMEA_TIMEFACTOR 1.0)
+endif()
+
+target_compile_definitions(${COMPONENT_TARGET} PRIVATE _ESP32 _SERIALEMULATOR _TIMEFACTOR=${NMEA_TIMEFACTOR})
 target_compile_options(${COMPONENT_TARGET} PRIVATE -Wno-error)

@@ -8,6 +8,9 @@
 #include "CRouteurEmulateurNMEA.hpp"
 #include <math.h>
 #include "CTimeUtils.hpp"  
+
+std::atomic<double> CNMEACAN::s_TimeFactor{ 1.0 };
+
 CNMEACAN::~CNMEACAN()
     {
         if (m_pLauchThread)
@@ -38,6 +41,19 @@ std::string CNMEACAN::ToNMEA0183Coord(double deg, bool isLat)
     snprintf(buf, sizeof(buf), isLat ? "%02d%07.4f,%c" : "%03d%07.4f,%c", d, m, hemi);
     return std::string(buf);
 }
+
+void CNMEACAN::SetTimeFactor(double factor)
+{
+    if (factor < 0.1)
+        factor = 0.1;
+    s_TimeFactor.store(factor);
+}
+
+double CNMEACAN::GetTimeFactor()
+{
+    return s_TimeFactor.load();
+}
+
 void CNMEACAN::StartLoop()
 {
     m_bStarted = true;
@@ -70,7 +86,7 @@ void CNMEACAN::LoopProducer(void *pArg)
         if (dt >= 100)
         {
             lastTime = now;
-            pCAN->GenerateRandomData(dt / 1000, 1);
+            pCAN->GenerateRandomData(dt / 1000, GetTimeFactor());
             pCAN->send(); // pousse dans la FIFO
         }
 
@@ -307,10 +323,9 @@ CPGN_CNMEA_129025::~CPGN_CNMEA_129025()
 }
 void CPGN_CNMEA_129025::GenerateRandomData(double trueDeltaTime, double timeFactor) 
 {
-    m_HeadingTimerAcc += trueDeltaTime;
-    m_SpeedTimerAcc += trueDeltaTime;
-
     double simulatedDeltaT = trueDeltaTime * timeFactor;
+    m_HeadingTimerAcc += simulatedDeltaT;
+    m_SpeedTimerAcc += simulatedDeltaT;
 
     // --- 1. Variation lente de la vitesse ---
     if (m_SpeedTimerAcc >= 3.0)   // toutes les 3 secondes
@@ -433,14 +448,13 @@ void CPGN_CNMEA_128267::GenerateRandomData(double trueDeltaTime, double timeFact
     m_DepthMeters = BoundedRand(0, 50, 1);
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-CPGN_CNMEA_129038::CPGN_CNMEA_129038(CRouteurEmulateurNMEA* pRouteur, CPGN_CNMEA_129025* pOwnShip)
+CPGN_CNMEA_129038::CPGN_CNMEA_129038(CRouteurEmulateurNMEA* pRouteur)
 {
     m_Priority = 4;
     m_SourceAddress = 0x04; // Transpondeur AIS
     m_PGN = 129038;         // 0x1F016
     setHeader();
     m_pRouteur = pRouteur;
-    m_pOwnShip = pOwnShip;
 
     m_MMSI = 0;
     m_Latitude = 0.0;
@@ -487,60 +501,34 @@ void CPGN_CNMEA_129038::encode()
 
 void CPGN_CNMEA_129038::GenerateRandomData(double trueDeltaTime, double timeFactor)
 {
-    if (!m_pRouteur)
-        return;
-    static bool aisSeeded = false;
+    // 0 = Création / Nouvelle cible, 1 = Maintien / Déplacement, 2 = Disparition
+    int state = rand() % 3;
+    static uint32_t currentMmsi = 227123456;
+    static double aisLat = 43.5850000;
+    static double aisLon = 7.1250000;
 
-    double centerLat = 43.5800000;
-    double centerLon = 7.1200000;
-    if (m_pOwnShip)
+    switch (state)
     {
-        centerLat = m_pOwnShip->getLatitude();
-        centerLon = m_pOwnShip->getLongitude();
+    case 0:
+        // Création / Changement de cible
+        currentMmsi = 227000000 + (rand() % 900000);
+        aisLat = 43.5800000 + ((rand() % 1000) * 0.00001);
+        aisLon = 7.1200000 + ((rand() % 1000) * 0.00001);
+        break;
+    case 1:
+        // Maintien / mise à jour de position
+        aisLat += ((rand() % 100) - 50) * 0.000005 * timeFactor;
+        aisLon += ((rand() % 100) - 50) * 0.000005 * timeFactor;
+        break;
+    case 2:
+        // Disparition / absence de cible
+        currentMmsi = 0;
+        break;
     }
 
-    if (!aisSeeded)
-    {
-        m_pRouteur->InitAISTargets(centerLat, centerLon, 5, 10);
-        aisSeeded = true;
-    }
-
-    const size_t n = m_pRouteur->GetAISTargetCount();
-
-    constexpr int CreatePct = 16;
-    constexpr int BaseDeletePct = 16;
-    constexpr size_t SoftHighTarget = 20;
-
-    int deletePct = BaseDeletePct;
-    if (n > SoftHighTarget)
-        deletePct += static_cast<int>(n - SoftHighTarget);
-    if (deletePct > 80)
-        deletePct = 80;
-
-    const int action = rand() % 100;
-    if (action < CreatePct)
-    {
-        m_pRouteur->AddAISTarget(centerLat, centerLon, 20.0);
-    }
-    else if (action >= 100 - deletePct)
-    {
-        m_pRouteur->RemoveAISTarget();
-    }
-
-    m_pRouteur->UpdateAISTargets(trueDeltaTime * timeFactor);
-
-    CRouteurEmulateurNMEA::sAISTarget target{};
-    if (!m_pRouteur->GetNextAISTarget(target))
-    {
-        m_MMSI = 0;
-        m_Latitude = centerLat;
-        m_Longitude = centerLon;
-        return;
-    }
-
-    m_MMSI = target.mmsi;
-    m_Latitude = target.latitude;
-    m_Longitude = target.longitude;
+    m_MMSI = currentMmsi;
+    m_Latitude = aisLat;
+    m_Longitude = aisLon;
 }
 uint32_t CPGN_CNMEA_129038::getMMSI() 
 { 

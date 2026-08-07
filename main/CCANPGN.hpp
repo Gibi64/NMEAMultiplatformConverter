@@ -20,11 +20,14 @@ protected:
     int m_SourceAddress;
     CRouteurEmulateurNMEA* m_pRouteur = NULL;
     bool m_bStarted = false; // Flag to control the loop
+    static std::atomic<double> s_TimeFactor;
 
 public:
     virtual ~CNMEACAN();
     static double BoundedRand(double range_min, double range_max, int digit);
     static std::string ToNMEA0183Coord(double deg, bool isLat);
+    static void SetTimeFactor(double factor);
+    static double GetTimeFactor();
 
     void StartLoop();
     uint32_t getHeader();
@@ -77,8 +80,8 @@ private:
     double m_Longitude; // En degrés décimaux (ex: 7.1200000)
     double m_SpeedKnots; // Vitesse en nœuds (ex: 5.0)
     double m_HeadingDeg; // Cap en degrés (ex: 90.0)
-    int m_HeadingTimerAcc = 0; // Compteur pour le changement de cap
-    int m_SpeedTimerAcc = 0; // Compteur pour le changement de vitesse
+    double m_HeadingTimerAcc = 0.0; // Compteur pour le changement de cap
+    double m_SpeedTimerAcc = 0.0; // Compteur pour le changement de vitesse
     CPGN_CNMEA_128259* m_pSpeed;
     CPGN_CNMEA_127250* m_pHeading;
     CPGN_CNMEA_126992* m_pTime;
@@ -108,10 +111,9 @@ private:
     uint32_t m_MMSI;
     double m_Latitude;
     double m_Longitude;
-    CPGN_CNMEA_129025* m_pOwnShip;
 
 public:
-    CPGN_CNMEA_129038(CRouteurEmulateurNMEA* pRouteur, CPGN_CNMEA_129025* pOwnShip = nullptr);
+    CPGN_CNMEA_129038(CRouteurEmulateurNMEA* pRouteur);
     void setTargetData(uint32_t mmsi, double latitude, double longitude);
     virtual void encode() override;
     virtual void GenerateRandomData(double trueDeltaTime, double timeFactor) override;
