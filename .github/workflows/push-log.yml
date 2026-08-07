@@ -1,0 +1,68 @@
+name: Update Push Log
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - PUSH_LOG.md
+
+permissions:
+  contents: write
+
+jobs:
+  update-push-log:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Append push summary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            RANGE="$AFTER"
+          else
+            RANGE="$BEFORE..$AFTER"
+          fi
+
+          DATE_UTC="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+
+          {
+            echo ""
+            echo "## Push ${AFTER}"
+            echo ""
+            echo "- Date: ${DATE_UTC}"
+            echo "- Auteur: ${{ github.actor }}"
+            echo "- Range: ${RANGE}"
+            echo ""
+            echo "### Commits"
+            git log --no-merges --pretty='- %h %s' ${RANGE} || echo "- Aucun commit analyse"
+            echo ""
+          } >> PUSH_LOG.md
+
+      - name: Commit and push log update
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- PUSH_LOG.md; then
+            echo "No log changes to commit"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add PUSH_LOG.md
+          git commit -m "chore(pushlog): update push log for ${{ github.sha }}"
+          git push
