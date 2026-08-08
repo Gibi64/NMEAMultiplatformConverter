@@ -704,7 +704,7 @@ public:
             {
                 if (m_AISContacts.size() >= kMaxAisContacts)
                     continue;
-                sAISContact l = { update.mmsi, update.latitude,update.longitude, update.receivedMs, false, 1, 0.0, 0.0, 0.0, 0.0, 0.0, 0 };
+                sAISContact l = { update.mmsi, update.latitude,update.longitude, update.receivedMs, false, 1, 0.0, 0.0, 0, 0, 0.0, 0 };
                 auto inserted = m_AISContacts.emplace(update.mmsi, l);
                 itContact = inserted.first;
             }
