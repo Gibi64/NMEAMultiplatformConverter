@@ -38,10 +38,11 @@ public:
         memset(&addr, 0, sizeof(addr));
         addr.sin_family = AF_INET;
         addr.sin_port = htons(port);
-        //addr.sin_addr.s_addr = inet_addr("255.255.255.255");
 #if defined(_WIN32) || defined(__linux__)
-        InetPton(AF_INET, L"255.255.255.255", &addr.sin_addr);
+        // For local desktop testing (e.g., OpenCPN), send to loopback.
+        InetPton(AF_INET, L"127.0.0.1", &addr.sin_addr);
 #elif defined(_ESP32)
+        // On target, keep LAN broadcast behavior.
         addr.sin_addr.s_addr = inet_addr("255.255.255.255");
 #endif
         return sock;

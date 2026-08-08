@@ -248,46 +248,41 @@ void CPGN_CNMEA_126992::encode()
 }
 void CPGN_CNMEA_126992::GenerateRandomData(double dt, double tf)
 {
+    static bool initialized = false;
+    static uint64_t simulatedUnixMs = 0;
+
+    if (!initialized)
+    {
 #if defined(_ESP32)
-    time_t now;
-    time(&now);
-    struct tm t;
-    gmtime_r(&now, &t);
-
-    // Millisecondes depuis minuit
-    m_Time =
-        (t.tm_hour * 3600 +
-            t.tm_min * 60 +
-            t.tm_sec) * 1000;
-
-    // Jours depuis epoch (1970-01-01)
-    m_Date = static_cast<uint32_t>(now / 86400);
+        time_t now;
+        time(&now);
+        simulatedUnixMs = static_cast<uint64_t>(now) * 1000ULL;
 #else
-    SYSTEMTIME st;
-    GetSystemTime(&st);   // UTC, parfait pour NMEA
+        SYSTEMTIME st;
+        GetSystemTime(&st); // UTC
 
-    // Millisecondes depuis minuit
-    m_Time =
-        (st.wHour * 3600 +
-            st.wMinute * 60 +
-            st.wSecond) * 1000 +
-        st.wMilliseconds;
+        tm t = {};
+        t.tm_year = st.wYear - 1900;
+        t.tm_mon = st.wMonth - 1;
+        t.tm_mday = st.wDay;
+        t.tm_hour = st.wHour;
+        t.tm_min = st.wMinute;
+        t.tm_sec = st.wSecond;
 
-    // Jours depuis 1970
-    // On convertit SYSTEMTIME → jours depuis 1970 avec ta propre classe
-    tm t = {};
-    t.tm_year = st.wYear - 1900;
-    t.tm_mon = st.wMonth - 1;
-    t.tm_mday = st.wDay;
-    t.tm_hour = 0;
-    t.tm_min = 0;
-    t.tm_sec = 0;
-
-    // _mkgmtime = conversion UTC → time_t (epoch 1970)
-    time_t seconds = _mkgmtime(&t);
-
-    m_Date = static_cast<uint32_t>(seconds / 86400);
+        time_t seconds = _mkgmtime(&t);
+        simulatedUnixMs = static_cast<uint64_t>(seconds) * 1000ULL + static_cast<uint64_t>(st.wMilliseconds);
 #endif
+        initialized = true;
+    }
+
+    const double safeTf = (tf < 0.1) ? 0.1 : tf;
+    const double deltaMs = dt * safeTf * 1000.0;
+    if (deltaMs > 0.0)
+        simulatedUnixMs += static_cast<uint64_t>(llround(deltaMs));
+
+    constexpr uint64_t DAY_MS = 24ULL * 3600ULL * 1000ULL;
+    m_Date = static_cast<uint32_t>(simulatedUnixMs / DAY_MS);
+    m_Time = static_cast<uint32_t>(simulatedUnixMs % DAY_MS);
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 CPGN_CNMEA_129025::CPGN_CNMEA_129025(CRouteurEmulateurNMEA* pRouteur)
@@ -297,11 +292,11 @@ CPGN_CNMEA_129025::CPGN_CNMEA_129025(CRouteurEmulateurNMEA* pRouteur)
     m_PGN = 129025;
     m_pRouteur = pRouteur;
     setHeader();
-    // 1. Latitude initiale : entre 46.000 et 48.000
-    m_Latitude = BoundedRand(46, 48, 3);
+    // 1. Latitude initiale : zone Pertuis (La Rochelle / ile d'Aix), aleatoire serre
+    m_Latitude = BoundedRand(46.000, 46.080, 5);
 
-    // 2. Longitude initiale : entre 0.000 et 10.000
-    m_Longitude = BoundedRand(0, 10, 3);
+    // 2. Longitude initiale : ouest (negative), aleatoire serre
+    m_Longitude = BoundedRand(-1.280, -1.120, 5);
 
     // 3. Vitesse : entre 20 et 50 / 10 => 2.0 à 5.0 nœuds
     m_SpeedKnots = BoundedRand(2, 5, 1);
@@ -501,34 +496,92 @@ void CPGN_CNMEA_129038::encode()
 
 void CPGN_CNMEA_129038::GenerateRandomData(double trueDeltaTime, double timeFactor)
 {
-    // 0 = Création / Nouvelle cible, 1 = Maintien / Déplacement, 2 = Disparition
-    int state = rand() % 3;
-    static uint32_t currentMmsi = 227123456;
-    static double aisLat = 43.5850000;
-    static double aisLon = 7.1250000;
-
-    switch (state)
+    constexpr int kTargetCount = 5;
+    static bool initialized = false;
+    static uint32_t mmsi[kTargetCount] =
     {
-    case 0:
-        // Création / Changement de cible
-        currentMmsi = 227000000 + (rand() % 900000);
-        aisLat = 43.5800000 + ((rand() % 1000) * 0.00001);
-        aisLon = 7.1200000 + ((rand() % 1000) * 0.00001);
-        break;
-    case 1:
-        // Maintien / mise à jour de position
-        aisLat += ((rand() % 100) - 50) * 0.000005 * timeFactor;
-        aisLon += ((rand() % 100) - 50) * 0.000005 * timeFactor;
-        break;
-    case 2:
-        // Disparition / absence de cible
-        currentMmsi = 0;
-        break;
+        227100001U, 227100002U, 227100003U, 227100004U, 227100005U
+    };
+    static double lat[kTargetCount];
+    static double lon[kTargetCount];
+    static double cogDeg[kTargetCount];
+    static double sogKnots[kTargetCount];
+    static int index = 0;
+
+    const double ownLat = 46.0300000;
+    const double ownLon = -1.2000000;
+
+    if (!initialized)
+    {
+        for (int i = 0; i < kTargetCount; ++i)
+        {
+            const int zone = rand() % 3;
+            double minNm = 0.5;
+            double maxNm = 5.0;
+            if (zone == 1)
+            {
+                minNm = 5.0;
+                maxNm = 10.0;
+            }
+            else if (zone == 2)
+            {
+                minNm = 15.0;
+                maxNm = 19.0;
+            }
+
+            const double r01 = static_cast<double>(rand()) / static_cast<double>(RAND_MAX);
+            const double spawnDistanceNm = minNm + (maxNm - minNm) * r01;
+            const double spawnBearingDeg = static_cast<double>(rand() % 360);
+            const double bearingRad = spawnBearingDeg * 3.14159265358979323846 / 180.0;
+            const double ownLatRad = ownLat * 3.14159265358979323846 / 180.0;
+            const double cosLat = cos(ownLatRad);
+
+            const double dLatDeg = (spawnDistanceNm * cos(bearingRad)) / 60.0;
+            double dLonDeg = 0.0;
+            if (fabs(cosLat) > 1e-9)
+                dLonDeg = (spawnDistanceNm * sin(bearingRad)) / (60.0 * cosLat);
+
+            lat[i] = ownLat + dLatDeg;
+            lon[i] = ownLon + dLonDeg;
+            cogDeg[i] = static_cast<double>(rand() % 360);
+            sogKnots[i] = 1.0 + static_cast<double>(rand() % 1600) / 100.0;
+        }
+        initialized = true;
     }
 
-    m_MMSI = currentMmsi;
-    m_Latitude = aisLat;
-    m_Longitude = aisLon;
+    cogDeg[index] += ((rand() % 81) - 40) * 0.1;
+    if (cogDeg[index] < 0.0)
+        cogDeg[index] += 360.0;
+    if (cogDeg[index] >= 360.0)
+        cogDeg[index] -= 360.0;
+
+    sogKnots[index] += ((rand() % 21) - 10) * 0.05;
+    if (sogKnots[index] < 0.5)
+        sogKnots[index] = 0.5;
+    if (sogKnots[index] > 25.0)
+        sogKnots[index] = 25.0;
+
+    {
+        const double simulatedDtSec = trueDeltaTime * timeFactor;
+        const double distanceNm = sogKnots[index] * (simulatedDtSec / 3600.0);
+        const double cogRad = cogDeg[index] * 3.14159265358979323846 / 180.0;
+        const double latRad = lat[index] * 3.14159265358979323846 / 180.0;
+        const double cosLat = cos(latRad);
+
+        const double dLatDeg = (distanceNm * cos(cogRad)) / 60.0;
+        double dLonDeg = 0.0;
+        if (fabs(cosLat) > 1e-9)
+            dLonDeg = (distanceNm * sin(cogRad)) / (60.0 * cosLat);
+
+        lat[index] += dLatDeg;
+        lon[index] += dLonDeg;
+    }
+
+    m_MMSI = mmsi[index];
+    m_Latitude = lat[index];
+    m_Longitude = lon[index];
+
+    index = (index + 1) % kTargetCount;
 }
 uint32_t CPGN_CNMEA_129038::getMMSI() 
 { 

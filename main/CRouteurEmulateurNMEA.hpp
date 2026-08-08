@@ -23,14 +23,11 @@ struct sArgumentsLoopRouteur
 #endif
 
 #endif
-#include<vector>
+#include <vector>
 #include <map>
 #include <atomic>
 class CRouteurEmulateurNMEA
 {
-private:
-    std::mutex m_fifoMutex;
-
 public:
     std::mutex& GetMutex() { return m_fifoMutex; } // Compatibilite: mutex FIFO
     std::mutex& GetFIFOMutex() { return m_fifoMutex; }
@@ -38,5 +35,8 @@ public:
     std::atomic<bool> g_bStopThread{ false }; // Global flag to control the thread
     void PushFIFO(const unsigned char* data, size_t size);
     static void LoopFIFOThreadServer(void* Args);
+
+private:
+    std::mutex m_fifoMutex;
 };
 

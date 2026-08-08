@@ -69,9 +69,11 @@ extern "C" void app_main(void)
 #else
 int main()
 {
+#ifndef _SERIALEMULATOR
         // Port serie pour l'emulateur windows
 	CSerialClient Serial;
 	Serial.connect((char*)"COM1", 9600, 'N', 8, 1);
+#endif
 
 #endif
     InitLog();
@@ -123,7 +125,7 @@ int main()
     ArgsAIS.pTranslator = &Translator;
     ArgsAIS.pRouteur = nullptr;
     ArgsAIS.Timer_ms = 20;
-    ArgsAIS.StaleTimeout_ms = 15000;
+    ArgsAIS.StaleTimeout_ms = 5000;
 #if defined (_SERIALEMULATOR)
     ArgsAIS.pRouteur = &Routeur;
 #endif

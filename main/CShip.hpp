@@ -136,7 +136,7 @@ protected:
         uint16_t rawSog = 1023U;
         if (sogValid)
         {
-            const double boundedSog = std::min(sogKnots, 102.2);
+            const double boundedSog = std::min<double>(sogKnots, 102.2);
             rawSog = static_cast<uint16_t>(llround(boundedSog * 10.0));
         }
 
@@ -226,6 +226,16 @@ private:
 class CMyShip : public CShip
 {
 public:
+    bool TryGetCurrentPosition(double& latitude, double& longitude) const
+    {
+        if (!m_HasNavFix)
+            return false;
+
+        latitude = m_RMCMeanData.RMCMeanData.latitude;
+        longitude = m_RMCMeanData.RMCMeanData.longitude;
+        return true;
+    }
+
     bool DecodePGN129025(const std::vector<unsigned char>& encoded)
     {
         if (encoded.size() < 8 || m_UTCTime.empty())
@@ -286,11 +296,15 @@ public:
         if (encoded.size() < 8)
             return false;
 
-        uint16_t rawDepth =
-            static_cast<uint16_t>(encoded[0]) |
-            (static_cast<uint16_t>(encoded[1]) << 8);
+        // PGN 128267: depth is encoded in millimeters on bytes 1..4 (byte 0 is SID).
+        uint32_t depthMm =
+            static_cast<uint32_t>(encoded[1]) |
+            (static_cast<uint32_t>(encoded[2]) << 8) |
+            (static_cast<uint32_t>(encoded[3]) << 16) |
+            (static_cast<uint32_t>(encoded[4]) << 24);
 
-        return StackMeanDepthData(rawDepth);
+        m_DepthMeters = static_cast<double>(depthMm) / 1000.0;
+        return true;
     }
 
     bool DecodePGN130306(const std::vector<unsigned char>& encoded)
@@ -306,7 +320,13 @@ public:
             static_cast<uint16_t>(encoded[3]) |
             (static_cast<uint16_t>(encoded[4]) << 8);
 
-        return StackMeanWindData(rawSpeed, rawAngle);
+        // PGN 130306: angle in rad*10000, speed in m/s*100.
+        const double angleRad = static_cast<double>(rawAngle) / 10000.0;
+        m_WindAngleDeg = angleRad * 180.0 / 3.14159265358979323846;
+
+        const double speedMS = static_cast<double>(rawSpeed) / 100.0;
+        m_WindSpeedKnots = speedMS / 0.514444;
+        return true;
     }
 
     bool DecodePGN128259(const std::vector<unsigned char>& encoded)
@@ -366,10 +386,10 @@ public:
 
     std::string BuildDBT()
     {
-        if (m_RMCMeanData.m_Count <= 0)
+        if (!std::isfinite(m_DepthMeters))
             return "";
 
-        double depthMeters = m_RMCMeanData.RMCMeanData.speedKnots;
+        double depthMeters = m_DepthMeters;
         char buf[64];
         snprintf(buf, sizeof(buf), "$SDDBT,%.1f,f,%.1f,M,%.1f,F", depthMeters * 3.28084, depthMeters, depthMeters * 3.28084);
         return CalculateNMEAChecksum(std::string(buf));
@@ -377,13 +397,80 @@ public:
 
     std::string BuildMWV()
     {
-        if (m_RMCMeanData.m_Count <= 0)
+        if (!std::isfinite(m_WindSpeedKnots) || !std::isfinite(m_WindAngleDeg))
             return "";
 
-        double windSpeed = m_RMCMeanData.RMCMeanData.speedKnots;
-        double windAngle = m_RMCMeanData.RMCMeanData.courseOverGround;
+        double windSpeed = m_WindSpeedKnots;
+        double windAngle = m_WindAngleDeg;
         char buf[64];
         snprintf(buf, sizeof(buf), "$WIMWV,%.1f,R,%.1f,N,A", windAngle, windSpeed);
+        return CalculateNMEAChecksum(std::string(buf));
+    }
+
+    std::string BuildVTG()
+    {
+        const double cog = GetCogDeg();
+        const double sogKnots = GetSogKnots();
+        if (!std::isfinite(cog) || !std::isfinite(sogKnots) || sogKnots < 0.0)
+            return "";
+
+        const double sogKmh = sogKnots * 1.852;
+        char buf[96];
+        snprintf(buf, sizeof(buf), "$GPVTG,%.2f,T,,M,%.2f,N,%.2f,K", cog, sogKnots, sogKmh);
+        return CalculateNMEAChecksum(std::string(buf));
+    }
+
+    std::string BuildGGA()
+    {
+        if (!m_HasNavFix)
+            return "";
+
+        const auto& t = m_RMCMeanData.RMCMeanData.utcTime;
+        char timeBuf[16];
+        snprintf(timeBuf, sizeof(timeBuf), "%02d%02d%02d.%03d", t.hour, t.minute, t.second, t.millisecond);
+
+        std::string latStr = ToNMEA0183Coord(m_RMCMeanData.RMCMeanData.latitude, true);
+        std::string lonStr = ToNMEA0183Coord(m_RMCMeanData.RMCMeanData.longitude, false);
+
+        auto splitCoord = [](const std::string& s)
+            {
+                auto commaPos = s.find(',');
+                return std::make_pair(s.substr(0, commaPos), s.substr(commaPos + 1));
+            };
+
+        auto lat = splitCoord(latStr);
+        auto lon = splitCoord(lonStr);
+
+        char buf[160];
+        // Fix quality=1, satellites=08, HDOP=0.9, altitude/reference fixed for emulator use.
+        snprintf(buf, sizeof(buf), "$GPGGA,%s,%s,%s,%s,%s,1,08,0.9,5.0,M,0.0,M,,",
+            timeBuf,
+            lat.first.c_str(), lat.second.c_str(),
+            lon.first.c_str(), lon.second.c_str());
+
+        return CalculateNMEAChecksum(std::string(buf));
+    }
+
+    std::string BuildHDT()
+    {
+        const double cog = GetCogDeg();
+        if (!std::isfinite(cog))
+            return "";
+
+        char buf[64];
+        snprintf(buf, sizeof(buf), "$HCHDT,%.2f,T", cog);
+        return CalculateNMEAChecksum(std::string(buf));
+    }
+
+    std::string BuildHDG()
+    {
+        const double cog = GetCogDeg();
+        if (!std::isfinite(cog))
+            return "";
+
+        char buf[64];
+        // Magnetic deviation/variation left empty for emulator use.
+        snprintf(buf, sizeof(buf), "$HCHDG,%.2f,,,", cog);
         return CalculateNMEAChecksum(std::string(buf));
     }
 
@@ -412,6 +499,10 @@ private:
 
     sUTCTime m_UTCTime;
     sRMCMeanData m_RMCMeanData;
+    bool m_HasNavFix = false;
+    double m_DepthMeters = std::numeric_limits<double>::quiet_NaN();
+    double m_WindSpeedKnots = std::numeric_limits<double>::quiet_NaN();
+    double m_WindAngleDeg = std::numeric_limits<double>::quiet_NaN();
 
     static uint64_t ToEpoch2001ms(const sUTCTime& t)
     {
@@ -494,6 +585,7 @@ private:
             seed.courseOverGround = 0;
             m_RMCMeanData.RMCMeanData = seed;
             m_RMCMeanData.m_Count = 1;
+            m_HasNavFix = true;
             return false;
         }
 
@@ -603,9 +695,21 @@ public:
         }
 
         std::lock_guard<std::mutex> lock(m_AISContactsMutex);
+        constexpr size_t kMaxAisContacts = 5;
+    constexpr double kMaxAisSampleSogKnots = 30.0;
         for (const auto& update : pending)
         {
-            auto& contact = m_AISContacts[update.mmsi];
+            auto itContact = m_AISContacts.find(update.mmsi);
+            if (itContact == m_AISContacts.end())
+            {
+                if (m_AISContacts.size() >= kMaxAisContacts)
+                    continue;
+
+                auto inserted = m_AISContacts.emplace(update.mmsi, sAISContact{});
+                itContact = inserted.first;
+            }
+
+            auto& contact = itContact->second;
             if (contact.hasPosition)
             {
                 sKinematics k = ComputeSogCog(
@@ -617,10 +721,14 @@ public:
                     update.receivedMs);
                 if (k.valid)
                 {
-                    contact.sogAcc += k.sogKnots;
-                    contact.cogSinAcc += sin(k.cogDeg * 3.14159265358979323846 / 180.0);
-                    contact.cogCosAcc += cos(k.cogDeg * 3.14159265358979323846 / 180.0);
-                    contact.navSampleCount += 1;
+                    // Ignore unrealistic spikes caused by timing jitter in emulator frame delivery.
+                    if (k.sogKnots <= kMaxAisSampleSogKnots)
+                    {
+                        contact.sogAcc += k.sogKnots;
+                        contact.cogSinAcc += sin(k.cogDeg * 3.14159265358979323846 / 180.0);
+                        contact.cogCosAcc += cos(k.cogDeg * 3.14159265358979323846 / 180.0);
+                        contact.navSampleCount += 1;
+                    }
                 }
             }
 
@@ -634,30 +742,43 @@ public:
         }
     }
 
-    void PurgeAISContacts(uint64_t nowMs, uint64_t staleTimeoutMs)
+    void PurgeAISContacts(uint64_t nowMs, uint64_t staleTimeoutMs, double ownLatitude, double ownLongitude, bool hasOwnPosition)
     {
         std::lock_guard<std::mutex> lock(m_AISContactsMutex);
+        constexpr double kMaxAisDistanceNm = 20.0;
         for (auto it = m_AISContacts.begin(); it != m_AISContacts.end();)
         {
             const bool isStale = (nowMs > it->second.lastSeenMs) && ((nowMs - it->second.lastSeenMs) > staleTimeoutMs);
-            if (isStale)
+            bool isOutOfRange = false;
+            if (hasOwnPosition && it->second.hasPosition)
+            {
+                const double distanceNm = ComputeDistanceNm(ownLatitude, ownLongitude, it->second.latitude, it->second.longitude);
+                isOutOfRange = (distanceNm > kMaxAisDistanceNm);
+            }
+
+            if (isStale || isOutOfRange)
                 it = m_AISContacts.erase(it);
             else
                 ++it;
         }
     }
 
-    std::vector<std::string> ConsumeAISMessages()
+    std::vector<std::string> ConsumeAISMessages(double ownLatitude, double ownLongitude, bool hasOwnPosition)
     {
         std::vector<std::string> messages;
         std::lock_guard<std::mutex> lock(m_AISContactsMutex);
         messages.reserve(m_AISContacts.size());
+        constexpr double kMaxAisDistanceNm = 20.0;
+        constexpr double kMaxAisTxSogKnots = 30.0;
 
-        for (auto& entry : m_AISContacts)
+        for (auto it = m_AISContacts.begin(); it != m_AISContacts.end();)
         {
-            auto& contact = entry.second;
+            auto& contact = it->second;
             if (!contact.dirty)
+            {
+                ++it;
                 continue;
+            }
 
             if (contact.sampleCount > 0)
             {
@@ -678,10 +799,23 @@ public:
                 contact.hasKinematics = true;
             }
 
+            if (hasOwnPosition)
+            {
+                const double distanceNm = ComputeDistanceNm(ownLatitude, ownLongitude, contact.latitude, contact.longitude);
+                if (distanceNm > kMaxAisDistanceNm)
+                {
+                    it = m_AISContacts.erase(it);
+                    continue;
+                }
+            }
+
             const double sogToSend = contact.hasKinematics ? contact.sogKnots : std::numeric_limits<double>::quiet_NaN();
             const double cogToSend = contact.hasKinematics ? contact.cogDeg : std::numeric_limits<double>::quiet_NaN();
+            const double boundedSogToSend = (std::isfinite(sogToSend) && sogToSend > kMaxAisTxSogKnots)
+                ? kMaxAisTxSogKnots
+                : sogToSend;
 
-            messages.emplace_back(BuildAisAivdmType1(contact.mmsi, contact.latitude, contact.longitude, sogToSend, cogToSend));
+            messages.emplace_back(BuildAisAivdmType1(contact.mmsi, contact.latitude, contact.longitude, boundedSogToSend, cogToSend));
 
             contact.latitudeAcc = 0.0;
             contact.longitudeAcc = 0.0;
@@ -691,6 +825,8 @@ public:
             contact.cogCosAcc = 0.0;
             contact.navSampleCount = 0;
             contact.dirty = false;
+
+            ++it;
         }
 
         return messages;
@@ -703,6 +839,27 @@ public:
     }
 
 private:
+    static double ComputeDistanceNm(double lat1Deg, double lon1Deg, double lat2Deg, double lon2Deg)
+    {
+        constexpr double PI = 3.14159265358979323846;
+        auto deg2rad = [](double d) { return d * PI / 180.0; };
+
+        const double lat1 = deg2rad(lat1Deg);
+        const double lon1 = deg2rad(lon1Deg);
+        const double lat2 = deg2rad(lat2Deg);
+        const double lon2 = deg2rad(lon2Deg);
+
+        const double dLat = lat2 - lat1;
+        const double dLon = lon2 - lon1;
+        const double latMean = (lat1 + lat2) / 2.0;
+
+        constexpr double R = 6371000.0;
+        const double dNorth = R * dLat;
+        const double dEast = R * cos(latMean) * dLon;
+        const double distanceMeters = sqrt(dNorth * dNorth + dEast * dEast);
+        return distanceMeters / 1852.0;
+    }
+
     struct sAISUpdate
     {
         uint32_t mmsi;

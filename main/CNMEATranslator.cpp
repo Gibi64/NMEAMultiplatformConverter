@@ -262,6 +262,38 @@ void CNMEATranslator::LoopTCP_UDPSend(void* Args)
                     pTranslator->m_pUDPServer->send(mwv);
             }
 
+            std::string vtg = pTranslator->m_myShip.BuildVTG();
+            if (!vtg.empty())
+            {
+                write_log("Sending VTG: " + vtg + "\n");
+                if (pTranslator->m_pUDPServer)
+                    pTranslator->m_pUDPServer->send(vtg);
+            }
+
+            std::string gga = pTranslator->m_myShip.BuildGGA();
+            if (!gga.empty())
+            {
+                write_log("Sending GGA: " + gga + "\n");
+                if (pTranslator->m_pUDPServer)
+                    pTranslator->m_pUDPServer->send(gga);
+            }
+
+            std::string hdt = pTranslator->m_myShip.BuildHDT();
+            if (!hdt.empty())
+            {
+                write_log("Sending HDT: " + hdt + "\n");
+                if (pTranslator->m_pUDPServer)
+                    pTranslator->m_pUDPServer->send(hdt);
+            }
+
+            std::string hdg = pTranslator->m_myShip.BuildHDG();
+            if (!hdg.empty())
+            {
+                write_log("Sending HDG: " + hdg + "\n");
+                if (pTranslator->m_pUDPServer)
+                    pTranslator->m_pUDPServer->send(hdg);
+            }
+
             startTime = CTimeUtils::GetMs();
         }
 
@@ -279,12 +311,21 @@ void CNMEATranslator::LoopAIS(void* Args)
     uint64_t lastLogTimeMs = CTimeUtils::GetMs();
     for (;;)
     {
+        double ownLatitude = 0.0;
+        double ownLongitude = 0.0;
+        const bool hasOwnPosition = pTranslator->m_myShip.TryGetCurrentPosition(ownLatitude, ownLongitude);
+
         pTranslator->m_otherBoats.ProcessAISUpdates();
-        pTranslator->m_otherBoats.PurgeAISContacts(CTimeUtils::GetMs(), static_cast<uint64_t>(pArgs->StaleTimeout_ms));
+        pTranslator->m_otherBoats.PurgeAISContacts(
+            CTimeUtils::GetMs(),
+            static_cast<uint64_t>(pArgs->StaleTimeout_ms),
+            ownLatitude,
+            ownLongitude,
+            hasOwnPosition);
 
         if (pTranslator->m_pUDPServer)
         {
-            auto aisMessages = pTranslator->m_otherBoats.ConsumeAISMessages();
+            auto aisMessages = pTranslator->m_otherBoats.ConsumeAISMessages(ownLatitude, ownLongitude, hasOwnPosition);
             for (const auto& message : aisMessages)
             {
                 write_log("Sending AIS: " + message + "\n");
