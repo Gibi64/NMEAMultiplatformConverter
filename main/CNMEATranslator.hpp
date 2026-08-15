@@ -6,8 +6,8 @@
 #include "CUDP_Broadcast_Server.hpp"
 #include "CTimeUtils.hpp"
 #include "InitLog.hpp"
-#include "CShip.hpp"
 #include <math.h>
+#include <mutex>
 class CRouteurEmulateurNMEA;
 #ifdef _SERIALEMULATOR
 #else
@@ -29,19 +29,91 @@ public:
     bool Read(CCanFrame& frame);
 };
 
-
 class CNMEATranslator
 {
-    #define M_PI 3.14159265358979323846
+private:
+	std::mutex m_mutex_MapPGN; 
 public:
-    using tPGNDecoder = std::string(*)(const std::vector<unsigned char>&, CNMEATranslator*);
-    struct sPGNHandler
+	std::mutex* GetMutex_MapPGN() { return &m_mutex_MapPGN; }
+    CNMEATranslator(CUDP_Broadcast_Server* udpServer);
+
+
+    struct sCumulativeResult
     {
-        int dataCount;
-        tPGNDecoder decoder;
+        double m_Data[4] = { 0,0,0,0 };
+        uint32_t m_Count = 0;
+        uint64_t StartTime = 0;
+        uint64_t LastTime = 0;
+		bool ReadyToSend = false;
+        double& operator[](size_t index) { return m_Data[index]; }
     };
 
-	// On definit toujours la structure sArgumentsEmulator pour l'emulateur, sinon on definit la structure sArgumentsSerial pour le port serie
+    #define M_PI 3.14159265358979323846
+private:
+    std::map<long,sCumulativeResult*> m_Map_Result_Cumulative;
+public:
+    sCumulativeResult* GetCumulativeResult(long PGN_Number)
+    {
+        auto it = m_Map_Result_Cumulative.find(PGN_Number);
+        if (it != m_Map_Result_Cumulative.end())
+        {
+            return it->second;
+        }
+        else
+        {
+            sCumulativeResult* pResult = new sCumulativeResult();
+            m_Map_Result_Cumulative[PGN_Number] = pResult;
+            return pResult;
+        }
+    }
+    ////////////////////// Map des AIS ////////////////////////////////////////:
+    struct sAIS
+    {
+    public:
+        sCumulativeResult CumulativeResult;
+        long long LastSent;
+        static void AppendBits(std::vector<bool>& bits, uint32_t value, int bitCount)
+        {
+            for (int i = bitCount - 1; i >= 0; --i)
+                bits.push_back(((value >> i) & 0x1U) != 0);
+        }
+
+        static void AppendSignedBits(std::vector<bool>& bits, int32_t value, int bitCount)
+        {
+            const int64_t limit = (static_cast<int64_t>(1) << bitCount);
+            int64_t raw = value;
+            if (raw < 0)
+                raw = limit + raw;
+            AppendBits(bits, static_cast<uint32_t>(raw), bitCount);
+        }
+        static char ToAis6BitChar(uint8_t value)
+        {
+            value &= 0x3F;
+            return static_cast<char>(value < 40 ? (value + 48) : (value + 56));
+        }
+
+    };
+private:
+	std::map<long, sAIS*> m_Map_AIS;
+public:
+    std::map<long, sAIS*>* Get_Map_AIS()
+    {
+        return &m_Map_AIS;
+    }
+    sAIS* GetAISResult(long MMSI_Number)
+    {
+        auto it = m_Map_AIS.find(MMSI_Number);
+        if (it != m_Map_AIS.end())
+        {
+            return it->second;
+        }
+        else
+        {
+            sAIS* pResult = new sAIS();
+            m_Map_AIS[MMSI_Number] = pResult;
+            return pResult;
+        }
+	}
 	struct sArgumentsEmulator
         {
         CNMEATranslator * pTranslator;
@@ -70,24 +142,28 @@ private:
     bool m_bStarted = false;
     std::vector<unsigned char> m_Received;
     CUDP_Broadcast_Server* m_pUDPServer;
-    CMyShip m_myShip;
-    COtherBoats m_otherBoats;
 public:
+    CUDP_Broadcast_Server *GetUDP_Server()
+    {
+        return m_pUDPServer;
+	}
+    typedef void(*decode)(CNMEATranslator*, const std::vector<unsigned char>&);
+    typedef std::string(*Translate)(sCumulativeResult *);
+
+    struct sPGNHandler {
+        decode decoder;
+		Translate translator;
+        int dataCount;
+        std::string KeywordNMEA;
+    };
+
     std::map<int, sPGNHandler> m_MapPGN;
-    CNMEATranslator(CUDP_Broadcast_Server* udpServer);
-    static std::string DecodePGN_129025(const std::vector<unsigned char> &Encoded, CNMEATranslator* pTranslator);
-    static std::string DecodePGN_129038(const std::vector<unsigned char> &Encoded, CNMEATranslator* pTranslator);
-    static std::string DecodePGN_130306(const std::vector<unsigned char> &Encoded, CNMEATranslator* pTranslator);
-    static std::string DecodePGN_130321(const std::vector<unsigned char> &Encoded, CNMEATranslator* pTranslator);
-    static std::string DecodePGN_126992(const std::vector<unsigned char> &Encoded, CNMEATranslator* pTranslator);
-    static std::string DecodePGN_128259(const std::vector<unsigned char> &Encoded, CNMEATranslator* pTranslator);
-    static std::string DecodePGN_127250(const std::vector<unsigned char> &Encoded, CNMEATranslator* pTranslator);
-    static std::string DecodePGN_127251(const std::vector<unsigned char> &Encoded, CNMEATranslator* pTranslator);
-    static std::string DecodePGN_128267(const std::vector<unsigned char> &Encoded, CNMEATranslator* pTranslator);
-    static std::string CalculateNMEAChecksum(const std::string sentence);
     static std::string ToNMEA0183Coord(double deg, bool isLat);
+	static std::string CalculateNMEAChecksum(const std::string& sentence);
     void StartLoop();
     int GetDataCount(int pgn) const;
+    ///////////////////////////////////////////////////////////////////
+
     struct sArgumentsUDP
     {
         CNMEATranslator* pTranslator;
@@ -101,7 +177,12 @@ public:
         int Timer_ms;
         int StaleTimeout_ms;
     };
+    struct sWindData
+    {
+        double speedMs = 0.0;
+        double angleRad = 0.0;
+    };
+
     static void LoopExternalReadData(void *Args);
-    static void LoopAIS(void* Args);
 	static void LoopTCP_UDPSend(void* Args);
 };

@@ -94,6 +94,7 @@ int main()
     CRouteurEmulateurNMEA Routeur;
     CPGN_CNMEA_129025 Position(&Routeur);
     CPGN_CNMEA_128267 Depth(&Routeur);
+    CPGN_CNMEA_130306 Wind(&Routeur);
     CPGN_CNMEA_129038 AIS(&Routeur);
 
     CNMEATranslator::sArgumentsEmulator ArgsExternalDataInput;
@@ -129,7 +130,6 @@ int main()
 #if defined (_SERIALEMULATOR)
     ArgsAIS.pRouteur = &Routeur;
 #endif
-    CLaunchThread ThreadAIS(&CNMEATranslator::LoopAIS, &ArgsAIS);
 #if defined (_SERIALEMULATOR)
 	// On lance une thread FIFO pour générer les données NMEA vers le FIFO à haute frequence (10Hz)
     //

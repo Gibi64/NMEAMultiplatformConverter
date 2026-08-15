@@ -38,14 +38,7 @@ void CRouteurEmulateurNMEA::LoopFIFOThreadServer(void* Args)
 #else
             if (!pRouteur->g_fifo_Send.empty())
             {
-                dataToSend = std::move(pRouteur->g_fifo_Send.front());
-                // On limite la taille de fifo_Send � 1000 �l�ments pour �viter une croissance infinie
-                // On ne garde que les 1000 premiers �l�ments, les autres sont supprim�s
-                if (pRouteur->g_fifo_Send.size() > 1000)
-                {
-                    pRouteur->g_fifo_Send.erase(pRouteur->g_fifo_Send.begin() + 1000, pRouteur->g_fifo_Send.begin() + (pRouteur->g_fifo_Send.size()));
-                }
-                // C'est le Translator qui videra le FIFO, ici on ne fait que le limiter � 1000 �l�ments, on ne l'efface pas encore
+				pRouteur->CheckAndPurgeExtraRecords(); // On purge les anciens enregistrements si le FIFO est trop grand
 
 #endif
 
@@ -54,4 +47,30 @@ void CRouteurEmulateurNMEA::LoopFIFOThreadServer(void* Args)
     // On rend la main 2ms � l'OS 
     CTimeUtils::CPUSleep(2);
     }
+}
+unsigned long CRouteurEmulateurNMEA::GetFIFOSize()
+{
+    //std::lock_guard<std::mutex> lock(m_fifoMutex);
+
+    unsigned long Total_Size = 0;
+    for (auto it = g_fifo_Send.begin(); it != g_fifo_Send.end(); it++)
+    {
+        Total_Size += it->size();
+    }
+    return Total_Size;
+}
+void CRouteurEmulateurNMEA::CheckAndPurgeExtraRecords()
+{
+    //std::lock_guard<std::mutex> lock(m_fifoMutex);
+
+    unsigned long fifoSize = GetFIFOSize();
+    if (fifoSize < 4000L) return;
+
+
+    while (fifoSize >= 3000L && !g_fifo_Send.empty())
+    {
+        fifoSize -= g_fifo_Send.front().size();
+        g_fifo_Send.erase(g_fifo_Send.begin());
+    }
+	write_log("CRouteurEmulateurNMEA::CheckAndPurgeExtraRecords: Purged records to reduce FIFO size. New size: " + std::to_string(fifoSize) + "\n");
 }

@@ -1,11 +1,13 @@
-#if defined(_WIN32)
+﻿#if defined(_WIN32)
 #include <winsock2.h>
 #include <Windows.h>
+#include <math>
 #endif
 #include "CRouteurEmulateurNMEA.hpp"
 #include "CNMEATranslator.hpp"
 #include "InitLog.hpp"
-
+#include "Decode.hpp"
+#include "Translate.hpp"
 #if defined(_ESP32)
 #include "driver/twai.h"
 
@@ -39,64 +41,41 @@ CNMEATranslator::CNMEATranslator(CUDP_Broadcast_Server* udpServer)
 {
     m_pUDPServer = udpServer;
 
-    m_MapPGN[129025] = { 8, &CNMEATranslator::DecodePGN_129025 };
-    m_MapPGN[128267] = { 8, &CNMEATranslator::DecodePGN_128267 };
-    m_MapPGN[129038] = { 28, &CNMEATranslator::DecodePGN_129038 };
-    m_MapPGN[130306] = { 8, &CNMEATranslator::DecodePGN_130306 };
-    m_MapPGN[126992] = { 8, &CNMEATranslator::DecodePGN_126992 };
-    m_MapPGN[128259] = { 8, &CNMEATranslator::DecodePGN_128259 };
-    m_MapPGN[127250] = { 8, &CNMEATranslator::DecodePGN_127250 };
+    m_MapPGN[129025] = { &CDecode::DecodePGN129025 ,&CTranslate::TranlateRMC ,8,"RMC"};
+    m_MapPGN[128267] = { &CDecode::DecodePGN128267,&CTranslate::TranslateDBT,8,"DBT"};
+    m_MapPGN[129038] = { &CDecode::DecodePGN129038,nullptr,28,""};// Pas de translate ?
+    m_MapPGN[130306] = { &CDecode::DecodePGN130306,&CTranslate::TranslateMWV,8,"MWV"};
+    //m_MapPGN[128259] = { &CDecode::DecodePGN128259,&CTranslate::TranslateHDT,8,"HDT"};
+    //m_MapPGN[127250] = { &CDecode::DecodePGN127250,&CTranslate::TranslateHDT,8,"HDT"};
 }
 
-std::string CNMEATranslator::DecodePGN_129025(const std::vector<unsigned char>& encoded, CNMEATranslator* pTranslator)
-{
-    pTranslator->m_myShip.DecodePGN129025(encoded);
-    return "";
-}
 
-std::string CNMEATranslator::DecodePGN_129038(const std::vector<unsigned char>& encoded, CNMEATranslator* pTranslator)
+std::string CNMEATranslator::CalculateNMEAChecksum(const std::string& sentence)
 {
-    return pTranslator->m_otherBoats.DecodePGN129038(encoded);
-}
+    uint8_t checksum = 0;
+    size_t start = 0;
+    if (!sentence.empty() && (sentence[0] == '$' || sentence[0] == '!'))
+        start = 1;
 
-std::string CNMEATranslator::DecodePGN_130306(const std::vector<unsigned char>& encoded, CNMEATranslator* pTranslator)
-{
-    pTranslator->m_myShip.DecodePGN130306(encoded);
-    return "";
-}
+    for (size_t i = start; i < sentence.size(); ++i)
+        checksum ^= static_cast<uint8_t>(sentence[i]);
 
-std::string CNMEATranslator::DecodePGN_126992(const std::vector<unsigned char>& encoded, CNMEATranslator* pTranslator)
-{
-    pTranslator->m_myShip.DecodePGN126992(encoded);
-    return "";
-}
-
-std::string CNMEATranslator::DecodePGN_128259(const std::vector<unsigned char>& encoded, CNMEATranslator* pTranslator)
-{
-    pTranslator->m_myShip.DecodePGN128259(encoded);
-    return "";
-}
-
-std::string CNMEATranslator::DecodePGN_127250(const std::vector<unsigned char>& encoded, CNMEATranslator* pTranslator)
-{
-    pTranslator->m_myShip.DecodePGN127250(encoded);
-    return "";
-}
-
-std::string CNMEATranslator::DecodePGN_128267(const std::vector<unsigned char>& encoded, CNMEATranslator* pTranslator)
-{
-    pTranslator->m_myShip.DecodePGN128267(encoded);
-    return "";
-}
-
-std::string CNMEATranslator::CalculateNMEAChecksum(const std::string sentence)
-{
-    return CShip::CalculateNMEAChecksum(sentence);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "*%02X\r\n", checksum);
+    return sentence + buf;
 }
 
 std::string CNMEATranslator::ToNMEA0183Coord(double deg, bool isLat)
 {
-    return CShip::ToNMEA0183Coord(deg, isLat);
+    char hemi = (isLat ? (deg >= 0 ? 'N' : 'S') : (deg >= 0 ? 'E' : 'W'));
+    deg = deg>0 ? deg : -deg;
+
+    int d = static_cast<int>(deg);
+    double m = (deg - d) * 60.0;
+
+    char buf[32];
+    snprintf(buf, sizeof(buf), isLat ? "%02d%07.4f,%c" : "%03d%07.4f,%c", d, m, hemi);
+    return std::string(buf);
 }
 
 void CNMEATranslator::StartLoop()
@@ -140,7 +119,7 @@ void CNMEATranslator::LoopExternalReadData(void* Args)
     {
 #if defined(_SERIALEMULATOR)
         sArgumentsEmulator* pArgs = static_cast<sArgumentsEmulator*>(Args);
-        CNMEATranslator* pTransltator = pArgs->pTranslator;
+        CNMEATranslator* pTranslator = pArgs->pTranslator;
         CRouteurEmulateurNMEA* pRouteur = pArgs->pRouteur;
         {
             std::lock_guard<std::mutex> lock(pRouteur->GetFIFOMutex());
@@ -150,11 +129,11 @@ void CNMEATranslator::LoopExternalReadData(void* Args)
                 auto& frame = pRouteur->g_fifo_Send.front();
                 nbrOfBytes = static_cast<int>(frame.size());
                 for (int i = 0; i < nbrOfBytes; ++i)
-                    pTransltator->m_Received.push_back(frame[static_cast<size_t>(i)]);
+                    pTranslator->m_Received.push_back(frame[static_cast<size_t>(i)]);
                 pRouteur->g_fifo_Send.erase(pRouteur->g_fifo_Send.begin());
             }
         }
-        auto bufferSize = pTransltator->m_Received.size();
+        auto bufferSize = pTranslator->m_Received.size();
 #else
 #if defined(_WIN32) || defined(__linux__)
         if (pSerial->GetSerialHandle() == INVALID_HANDLE_VALUE)
@@ -186,20 +165,22 @@ void CNMEATranslator::LoopExternalReadData(void* Args)
         {
             if (!CurrentPgn)
             {
-                if (bufferSize < static_cast<size_t>(HeaderSize))
+                if (bufferSize < HeaderSize)
+                {
+                    CTimeUtils::CPUSleep(1);   // ← indispensable
                     break;
-
-                uint32_t header = (static_cast<uint32_t>(pTransltator->m_Received[0]) << 24) |
-                    (static_cast<uint32_t>(pTransltator->m_Received[1]) << 16) |
-                    (static_cast<uint32_t>(pTransltator->m_Received[2]) << 8) |
-                    static_cast<uint32_t>(pTransltator->m_Received[3]);
+                }
+                uint32_t header = (static_cast<uint32_t>(pTranslator->m_Received[0]) << 24) |
+                    (static_cast<uint32_t>(pTranslator->m_Received[1]) << 16) |
+                    (static_cast<uint32_t>(pTranslator->m_Received[2]) << 8) |
+                    static_cast<uint32_t>(pTranslator->m_Received[3]);
                 CurrentPgn = (header >> 8) & 0x3FFFF;
-                pTransltator->m_Received.erase(pTransltator->m_Received.begin(), pTransltator->m_Received.begin() + HeaderSize);
-                bufferSize = pTransltator->m_Received.size();
+                pTranslator->m_Received.erase(pTranslator->m_Received.begin(), pTranslator->m_Received.begin() + HeaderSize);
+                bufferSize = pTranslator->m_Received.size();
             }
 
-            auto it = pTransltator->m_MapPGN.find(CurrentPgn);
-            if (it == pTransltator->m_MapPGN.end())
+            auto it = pTranslator->m_MapPGN.find(CurrentPgn);
+            if (it == pTranslator->m_MapPGN.end())
             {
                 CurrentPgn = 0;
                 continue;
@@ -214,16 +195,20 @@ void CNMEATranslator::LoopExternalReadData(void* Args)
 
             if (bufferSize < static_cast<size_t>(dataCount))
                 break;
-
-            std::string decodedMessage = it->second.decoder(
-                std::vector<unsigned char>(pTransltator->m_Received.begin(), pTransltator->m_Received.begin() + dataCount),
-                pTransltator);
-
-            pTransltator->m_Received.erase(pTransltator->m_Received.begin(), pTransltator->m_Received.begin() + dataCount);
+            auto decodeFunction = it->second.decoder;
+            if (decodeFunction != nullptr)
+            {
+                std::lock_guard<std::mutex> lock(*pTranslator->GetMutex_MapPGN());
+                decodeFunction(pTranslator, std::vector<unsigned char>(pTranslator->m_Received.begin(), pTranslator->m_Received.begin() + dataCount));
+                pTranslator->m_Received.erase(pTranslator->m_Received.begin(), pTranslator->m_Received.begin() + dataCount);
+            
+            }
             CurrentPgn = 0;
-            bufferSize = pTransltator->m_Received.size();
+            bufferSize = pTranslator->m_Received.size();
         }
     }
+    CTimeUtils::CPUSleep(2);
+
 }
 
 void CNMEATranslator::LoopTCP_UDPSend(void* Args)
@@ -238,109 +223,30 @@ void CNMEATranslator::LoopTCP_UDPSend(void* Args)
     {
         if (CTimeUtils::GetMs() - startTime > static_cast<unsigned long long>(pArgs->Timer_ms))
         {
-            std::string rmc = pTranslator->m_myShip.BuildRMC();
-            if (!rmc.empty())
+            for (auto it = pTranslator->m_MapPGN.begin(); it != pTranslator->m_MapPGN.end(); it++)
             {
-                write_log("Sending RMC: " + rmc + "\n");
-                if (pTranslator->m_pUDPServer)
-                    pTranslator->m_pUDPServer->send(rmc);
+             
+                std::lock_guard<std::mutex> lock(*pTranslator->GetMutex_MapPGN());
+                auto R = pTranslator->GetCumulativeResult(it->first);
+                if (R && R->ReadyToSend)
+                {
+                    auto Translate = it->second.translator;
+                    if (Translate)
+                    {
+                        std::string s = Translate(R);
+                        pTranslator->GetUDP_Server()->send(s);
+                        write_log("Sending " + it->second.KeywordNMEA + " : " + s + "\n");
+                        R->ReadyToSend = false;
+                        R->m_Count = 1;
+                    }
+                }
             }
-
-            std::string dbt = pTranslator->m_myShip.BuildDBT();
-            if (!dbt.empty())
-            {
-                write_log("Sending DBT: " + dbt + "\n");
-                if (pTranslator->m_pUDPServer)
-                    pTranslator->m_pUDPServer->send(dbt);
-            }
-
-            std::string mwv = pTranslator->m_myShip.BuildMWV();
-            if (!mwv.empty())
-            {
-                write_log("Sending MWV: " + mwv + "\n");
-                if (pTranslator->m_pUDPServer)
-                    pTranslator->m_pUDPServer->send(mwv);
-            }
-
-            std::string vtg = pTranslator->m_myShip.BuildVTG();
-            if (!vtg.empty())
-            {
-                write_log("Sending VTG: " + vtg + "\n");
-                if (pTranslator->m_pUDPServer)
-                    pTranslator->m_pUDPServer->send(vtg);
-            }
-
-            std::string gga = pTranslator->m_myShip.BuildGGA();
-            if (!gga.empty())
-            {
-                write_log("Sending GGA: " + gga + "\n");
-                if (pTranslator->m_pUDPServer)
-                    pTranslator->m_pUDPServer->send(gga);
-            }
-
-            std::string hdt = pTranslator->m_myShip.BuildHDT();
-            if (!hdt.empty())
-            {
-                write_log("Sending HDT: " + hdt + "\n");
-                if (pTranslator->m_pUDPServer)
-                    pTranslator->m_pUDPServer->send(hdt);
-            }
-
-            std::string hdg = pTranslator->m_myShip.BuildHDG();
-            if (!hdg.empty())
-            {
-                write_log("Sending HDG: " + hdg + "\n");
-                if (pTranslator->m_pUDPServer)
-                    pTranslator->m_pUDPServer->send(hdg);
-            }
-
             startTime = CTimeUtils::GetMs();
-        }
 
+        }
         CTimeUtils::CPUSleep(2);
+
     }
+
 }
 
-void CNMEATranslator::LoopAIS(void* Args)
-{
-    auto pArgs = static_cast<sArgumentsAIS*>(Args);
-    CNMEATranslator* pTranslator = pArgs->pTranslator;
-    if (!pTranslator->m_bStarted)
-        return;
-
-    uint64_t lastLogTimeMs = CTimeUtils::GetMs();
-    for (;;)
-    {
-        double ownLatitude = 0.0;
-        double ownLongitude = 0.0;
-        const bool hasOwnPosition = pTranslator->m_myShip.TryGetCurrentPosition(ownLatitude, ownLongitude);
-
-        pTranslator->m_otherBoats.ProcessAISUpdates();
-        pTranslator->m_otherBoats.PurgeAISContacts(
-            CTimeUtils::GetMs(),
-            static_cast<uint64_t>(pArgs->StaleTimeout_ms),
-            ownLatitude,
-            ownLongitude,
-            hasOwnPosition);
-
-        if (pTranslator->m_pUDPServer)
-        {
-            auto aisMessages = pTranslator->m_otherBoats.ConsumeAISMessages(ownLatitude, ownLongitude, hasOwnPosition);
-            for (const auto& message : aisMessages)
-            {
-                write_log("Sending AIS: " + message + "\n");
-                pTranslator->m_pUDPServer->send(message);
-            }
-        }
-
-        const uint64_t nowMs = CTimeUtils::GetMs();
-        if (nowMs - lastLogTimeMs >= 1000)
-        {
-            const size_t targetCount = pTranslator->m_otherBoats.GetAISContactCount();
-            write_log("Nombre de cibles AIS : " + std::to_string(targetCount) + "\n");
-            lastLogTimeMs = nowMs;
-        }
-
-        CTimeUtils::CPUSleep(pArgs->Timer_ms > 0 ? pArgs->Timer_ms : 20);
-    }
-}

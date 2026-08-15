@@ -5,6 +5,11 @@ idf_component_register(
         "ClientNMEA2000.cpp"
         "CNMEATranslator.cpp"
         "CRouteurEmulateurNMEA.cpp"
+        "CGeographic.cpp"
+        "DecodePGN.cpp"
+        "Stacking.cpp"
+        "Translate.cpp"
+
     INCLUDE_DIRS "."
 )
 if(NOT DEFINED NMEA_TIMEFACTOR)

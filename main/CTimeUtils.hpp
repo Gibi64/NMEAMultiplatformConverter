@@ -18,92 +18,105 @@ public:
         int month;
         int year;
     };
-    static sDate SystemDate(int NumberOfDaysSince1970)
+    struct sUTCTime
     {
-        sDate s;
-        s.day = 0;
-        s.month = 0;
-        s.year = 0;
-        if (NumberOfDaysSince1970 <= 0) return s;
-        int MonthDays[] = { 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365 };
-        time_t CumulativeDays = 0;
-        time_t CumulativePrevDays = 0;
-        int FirstYear = 1970;
-        while (CumulativeDays < NumberOfDaysSince1970)
+        int year = 0;
+        int month = 0;
+        int day = 0;
+        int hour = 0;
+        int minute = 0;
+        int second = 0;
+        int millisecond = 0;
+
+        bool empty() const
         {
-            CumulativePrevDays = CumulativeDays;
-            CumulativeDays += 365;
-            if (IsBisextil(FirstYear))
-            {
-                CumulativeDays++;
-            }
-            FirstYear++;
+            return year == 0 && month == 0 && day == 0 && hour == 0 && minute == 0 && second == 0 && millisecond == 0;
         }
-        s.year = FirstYear - 1;
-        int NumberOfDays = (int)(NumberOfDaysSince1970 - CumulativePrevDays);
-        bool bBisextil = IsBisextil(s.year);
-        if (bBisextil) for (auto i = 1; i < 12; i++) MonthDays[i]++;
-        s.month = 0;
-        while (MonthDays[s.month] < NumberOfDays) s.month = (s.month + 1) % 12;
-        if (s.month > 0) s.day = NumberOfDays - MonthDays[s.month - 1];
-        s.month++;
-		return s;
-    }
-    static sDate SystemTime(time_t tsecond)
+    };
+
+    static sUTCTime SystemDateTime(uint64_t ms)
     {
-        sDate s;
-        s.day = 0;
-        s.month = 0;
-        s.year = 0;
+            sUTCTime out;
 
-        if (!tsecond) return s;
-        int MonthDays[] = { 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365 };
-        time_t t_days = tsecond / 86400;
+#if defined(_WIN32)
+            SYSTEMTIME st;
+            GetSystemTime(&st);
+            out.year = st.wYear;
+            out.month = st.wMonth;
+            out.day = st.wDay;
+            out.hour = st.wHour;
+            out.minute = st.wMinute;
+            out.second = st.wSecond;
+            out.millisecond = st.wMilliseconds;
 
-        //Stockage du nombre de jours à ajouter suivant si l'année est bissextile
-        time_t CumulativeDays = 0;
-        //Stockage du nombre de jours en fonction du nombre d'année, bissextile ou non
-        time_t CumulativePrevDays = 0;
-        //année en cours de traitement
-        int FirstYear = 1970;
+#elif defined(__linux__)
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
 
+            struct tm tm_utc;
+            gmtime_r(&ts.tv_sec, &tm_utc);
 
-        while (CumulativeDays < t_days)
-        {
-            CumulativePrevDays = CumulativeDays;
-            CumulativeDays += 365;
+            out.year = tm_utc.tm_year + 1900;
+            out.month = tm_utc.tm_mon + 1;
+            out.day = tm_utc.tm_mday;
+            out.hour = tm_utc.tm_hour;
+            out.minute = tm_utc.tm_min;
+            out.second = tm_utc.tm_sec;
+            out.millisecond = ts.tv_nsec / 1000000;
 
-            if (IsBisextil(FirstYear))
-            {
-                CumulativeDays++;
-            }
+#elif defined(_ESP32)
+            // Si tu as un RTC GNSS → utiliser PGN 129029
+            // Sinon → temps système (non GNSS)
+            struct timeval tv;
+            gettimeofday(&tv, nullptr);
+
+            struct tm tm_utc;
+            gmtime_r(&tv.tv_sec, &tm_utc);
+
+            out.year = tm_utc.tm_year + 1900;
+            out.month = tm_utc.tm_mon + 1;
+            out.day = tm_utc.tm_mday;
+            out.hour = tm_utc.tm_hour;
+            out.minute = tm_utc.tm_min;
+            out.second = tm_utc.tm_sec;
+            out.millisecond = tv.tv_usec / 1000;
+
+#endif
+
+            return out;
         }
-        s.year = FirstYear - 1;
-        int NumberOfDays = (int)(t_days - CumulativePrevDays);
-        bool bBisextil = IsBisextil(s.year);
-        if (bBisextil) for (auto i = 1; i < 12; i++) MonthDays[i]++;
-        s.month = 0;
-        while (MonthDays[s.month] < NumberOfDays) s.month = (s.month + 1) % 12;
-        if (s.month > 0) s.day = NumberOfDays - MonthDays[s.month - 1];
-        s.month++;
-
-        return s;
-    }
     static bool IsBisextil(int year)
     {
         return ((year % 4 == 0) && (year % 100 != 0)) || (year % 400 == 0);
     }
     static unsigned long long GetMs()
     {
-        #ifdef _ESP32
-        return esp_timer_get_time() / 1000ULL;
-        #elif defined(_WIN32)
-        return static_cast<uint64_t>(GetTickCount64());
-        #elif defined(__linux__)
+        uint64_t ms;
+
+#ifdef _ESP32
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+        ms = tv.tv_sec * 1000ULL + tv.tv_usec / 1000ULL;
+
+#elif defined(_WIN32)
+        FILETIME ft;
+        GetSystemTimeAsFileTime(&ft);
+        ULARGE_INTEGER uli;
+        uli.LowPart = ft.dwLowDateTime;
+        uli.HighPart = ft.dwHighDateTime;
+        ms = (uli.QuadPart - 116444736000000000ULL) / 10000ULL;
+
+#elif defined(__linux__)
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
-        return static_cast<uint64_t>(ts.tv_sec) * 1000ULL + static_cast<uint64_t>(ts.tv_nsec) / 1000000ULL;     ²   
-        #endif
+        ms = ts.tv_sec * 1000ULL + ts.tv_nsec / 1000000ULL;
+#endif
+
+        // Epoch 2001-01-01 00:00:00 UTC
+        static const uint64_t epoch2001 =
+            (uint64_t)((uint64_t)978307200ULL * 1000ULL); // seconds * 1000
+
+        return ms - epoch2001;
     }
     static void CPUSleep(int ms)
     {
