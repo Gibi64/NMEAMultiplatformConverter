@@ -35,7 +35,7 @@ public:
     std::atomic<bool> g_bStopThread{ false }; // Global flag to control the thread
     void PushFIFO(const unsigned char* data, size_t size);
     static void LoopFIFOThreadServer(void* Args);
-    unsigned long GetFIFOSize();
+    size_t GetFIFOSize();
     void CheckAndPurgeExtraRecords();
 
 private:

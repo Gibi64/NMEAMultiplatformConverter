@@ -48,11 +48,11 @@ void CRouteurEmulateurNMEA::LoopFIFOThreadServer(void* Args)
     CTimeUtils::CPUSleep(2);
     }
 }
-unsigned long CRouteurEmulateurNMEA::GetFIFOSize()
+size_t CRouteurEmulateurNMEA::GetFIFOSize()
 {
     //std::lock_guard<std::mutex> lock(m_fifoMutex);
 
-    unsigned long Total_Size = 0;
+    size_t Total_Size = 0;
     for (auto it = g_fifo_Send.begin(); it != g_fifo_Send.end(); it++)
     {
         Total_Size += it->size();
@@ -63,7 +63,7 @@ void CRouteurEmulateurNMEA::CheckAndPurgeExtraRecords()
 {
     //std::lock_guard<std::mutex> lock(m_fifoMutex);
 
-    unsigned long fifoSize = GetFIFOSize();
+    size_t fifoSize = GetFIFOSize();
     if (fifoSize < 4000L) return;
 
 
@@ -72,5 +72,5 @@ void CRouteurEmulateurNMEA::CheckAndPurgeExtraRecords()
         fifoSize -= g_fifo_Send.front().size();
         g_fifo_Send.erase(g_fifo_Send.begin());
     }
-	write_log("CRouteurEmulateurNMEA::CheckAndPurgeExtraRecords: Purged records to reduce FIFO size. New size: " + std::to_string(fifoSize) + "\n");
+	//write_log("CRouteurEmulateurNMEA::CheckAndPurgeExtraRecords: Purged records to reduce FIFO size. New size: " + std::to_string(fifoSize) + "\n");
 }

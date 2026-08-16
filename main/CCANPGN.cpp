@@ -81,7 +81,7 @@ void CNMEACAN::LoopProducer(void *pArg)
     while (!pCAN->m_pRouteur->g_bStopThread.load())
     {
         auto now = CTimeUtils::GetMs();
-        double dt = (now - lastTime);
+        double dt = static_cast<double>(now - lastTime);
 
         if (dt >= 100)
         {
